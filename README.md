@@ -93,7 +93,4 @@ python main.py
 
 欢迎提交 Issue 和 Pull Request 来帮助改进项目。
 
-## 许可证
-
-[添加你的许可证信息]
 ```
