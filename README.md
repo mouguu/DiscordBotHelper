@@ -1,3 +1,5 @@
+
+
 ```markdown:README.md
 # DiscordBotHelper
 
@@ -26,35 +28,21 @@
 - 快速定位频道或帖子的第一条消息
 - 支持普通频道、论坛帖子和线程
 
-## 技术特性
+## 安装要求
 
-- 异步并发处理，提高搜索效率
-- 智能缓存机制，减少 API 调用
-- 完善的错误处理和日志记录
-- 优雅的权限检查和用户交互
-- 支持持久化视图
-- 模块化设计，易于扩展
+- Python 3.8 或更高版本
+- 以下 Python 包：
+  - discord.py >= 2.3.0
+  - python-dotenv >= 1.0.0
+  - pytz >= 2023.3
+  - aiohttp >= 3.8.0
 
-## 配置项
-
-主要配置参数（在 `config/config.py` 中）：
-- `MAX_MESSAGES_PER_SEARCH`: 单次搜索的最大消息数
-- `MESSAGES_PER_PAGE`: 每页显示的消息数
-- `REACTION_TIMEOUT`: 交互按钮的超时时间
-- `CONCURRENT_SEARCH_LIMIT`: 并发搜索限制
-- `EMBED_COLOR`: 消息嵌入的颜色主题
-
-## 环境要求
-
-- Python 3.8+
-- discord.py 2.0+
-- python-dotenv
-
-## 安装步骤
+## 快速开始
 
 1. 克隆仓库
 ```bash
-git clone [repository-url]
+git clone https://github.com/yourusername/DiscordBotHelper.git
+cd DiscordBotHelper
 ```
 
 2. 安装依赖
@@ -63,8 +51,8 @@ pip install -r requirements.txt
 ```
 
 3. 配置环境变量
-创建 `.env` 文件并设置：
-```env
+创建 `.env` 文件并添加你的 Discord Bot Token：
+```
 DISCORD_TOKEN=your_bot_token
 ```
 
@@ -82,6 +70,16 @@ python main.py
 - 读取消息历史
 - 使用外部表情符号
 
+## 配置选项
+
+可以在 `config/config.py` 中调整以下设置：
+- 命令前缀
+- 日志级别
+- 搜索结果每页显示数量
+- 交互按钮超时时间
+- 并发搜索限制
+- 其他自定义选项
+
 ## 注意事项
 
 - Bot 需要足够的权限才能正常运行
@@ -89,8 +87,23 @@ python main.py
 - 只有发起搜索的用户可以操作分页按钮
 - 部分功能可能需要管理员权限
 
+## 错误处理
+
+- 所有操作都有适当的错误处理和日志记录
+- 用户友好的错误提示
+- 自动重试机制
+- 详细的日志输出用于调试
+
 ## 贡献指南
 
-欢迎提交 Issue 和 Pull Request 来帮助改进项目。
+欢迎提交 Issue 和 Pull Request 来帮助改进项目。在提交代码前，请确保：
 
+1. 代码符合项目的编码规范
+2. 添加了适当的测试
+3. 更新了相关文档
+4. 提供清晰的提交信息
+
+## 许可证
+
+本项目采用 MIT 许可证 - 详见 [LICENSE](LICENSE) 文件
 ```
