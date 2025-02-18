@@ -1,6 +1,5 @@
 
-
-```markdown:README.md
+```markdown
 # DiscordBotHelper
 
 一个专门用于 Discord 论坛搜索和管理的 Bot，支持多样化的搜索条件和交互式结果展示。
@@ -8,21 +7,23 @@
 ## 主要功能
 
 ### 论坛搜索 (`/forum_search`)
-- 支持多条件组合搜索：
-  - 按标签搜索（最多3个标签）
-  - 按关键词搜索（支持多个关键词）
-  - 按发帖人筛选
-  - 支持标签和发帖人排除
-- 灵活的结果排序：
-  - 按反应数（升序/降序）
-  - 按回复数（升序/降序）
-  - 按发帖时间（新到旧/旧到新）
-  - 按最后活跃时间（新到旧/旧到新）
-- 交互式分页显示搜索结果
-  - 支持页面跳转
-  - 支持首页/末页快速跳转
-  - 显示帖子预览和统计信息
-  - 自动处理超时和权限
+支持多条件组合搜索：
+- 按标签搜索（最多 3 个标签）
+- 按关键词搜索（支持多个关键词）
+- 按发帖人筛选
+- 支持标签和发帖人排除
+
+灵活的结果排序：
+- 按反应数（升序/降序）
+- 按回复数（升序/降序）
+- 按发帖时间（新到旧/旧到新）
+- 按最后活跃时间（新到旧/旧到新）
+
+交互式分页显示搜索结果：
+- 支持页面跳转
+- 支持首页/末页快速跳转
+- 显示帖子预览和统计信息
+- 自动处理超时和权限
 
 ### 回到顶部 (`/回顶`)
 - 快速定位频道或帖子的第一条消息
@@ -32,34 +33,34 @@
 
 - Python 3.8 或更高版本
 - 以下 Python 包：
-  - discord.py >= 2.3.0
-  - python-dotenv >= 1.0.0
-  - pytz >= 2023.3
-  - aiohttp >= 3.8.0
+  - `discord.py` >= 2.3.0
+  - `python-dotenv` >= 1.0.0
+  - `pytz` >= 2023.3
+  - `aiohttp` >= 3.8.0
 
 ## 快速开始
 
 1. 克隆仓库
-```bash
-git clone https://github.com/yourusername/DiscordBotHelper.git
-cd DiscordBotHelper
-```
+   ```bash
+   git clone https://github.com/yourusername/DiscordBotHelper.git
+   cd DiscordBotHelper
+   ```
 
 2. 安装依赖
-```bash
-pip install -r requirements.txt
-```
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-3. 配置环境变量
-创建 `.env` 文件并添加你的 Discord Bot Token：
-```
-DISCORD_TOKEN=your_bot_token
-```
+3. 配置环境变量  
+   创建 `.env` 文件并添加你的 Discord Bot Token：
+   ```env
+   DISCORD_TOKEN=your_bot_token
+   ```
 
 4. 运行 Bot
-```bash
-python main.py
-```
+   ```bash
+   python main.py
+   ```
 
 ## 必要的 Bot 权限
 
@@ -82,28 +83,27 @@ python main.py
 
 ## 注意事项
 
-- Bot 需要足够的权限才能正常运行
-- 搜索结果会在 15 分钟后自动清理
-- 只有发起搜索的用户可以操作分页按钮
-- 部分功能可能需要管理员权限
+- Bot 需要足够的权限才能正常运行。
+- 搜索结果会在 15 分钟后自动清理。
+- 只有发起搜索的用户可以操作分页按钮。
+- 部分功能可能需要管理员权限。
 
 ## 错误处理
 
-- 所有操作都有适当的错误处理和日志记录
-- 用户友好的错误提示
-- 自动重试机制
-- 详细的日志输出用于调试
+- 所有操作都有适当的错误处理和日志记录。
+- 用户友好的错误提示。
+- 自动重试机制。
+- 详细的日志输出用于调试。
 
 ## 贡献指南
 
 欢迎提交 Issue 和 Pull Request 来帮助改进项目。在提交代码前，请确保：
-
-1. 代码符合项目的编码规范
-2. 添加了适当的测试
-3. 更新了相关文档
-4. 提供清晰的提交信息
+1. 代码符合项目的编码规范。
+2. 添加了适当的测试。
+3. 更新了相关文档。
+4. 提供清晰的提交信息。
 
 ## 许可证
 
-本项目采用 MIT 许可证 - 详见 [LICENSE](LICENSE) 文件
+本项目采用 MIT 许可证 - 详见 [LICENSE](LICENSE) 文件。
 ```
