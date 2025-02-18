@@ -1,95 +1,99 @@
-# Discord Bot Helper
+```markdown:README.md
+# DiscordBotHelper
 
-一个功能丰富的 Discord 机器人，用于帮助管理和增强您的 Discord 服务器体验。
+一个专门用于 Discord 论坛搜索和管理的 Bot，支持多样化的搜索条件和交互式结果展示。
 
-## 功能特性
+## 主要功能
 
-- 消息搜索功能
-- 热门消息统计
-- 支持分页显示的消息展示
-- 线程统计和管理
-- 文件附件处理
-- 自定义嵌入消息展示
+### 论坛搜索 (`/forum_search`)
+- 支持多条件组合搜索：
+  - 按标签搜索（最多3个标签）
+  - 按关键词搜索（支持多个关键词）
+  - 按发帖人筛选
+  - 支持标签和发帖人排除
+- 灵活的结果排序：
+  - 按反应数（升序/降序）
+  - 按回复数（升序/降序）
+  - 按发帖时间（新到旧/旧到新）
+  - 按最后活跃时间（新到旧/旧到新）
+- 交互式分页显示搜索结果
+  - 支持页面跳转
+  - 支持首页/末页快速跳转
+  - 显示帖子预览和统计信息
+  - 自动处理超时和权限
 
-## 项目结构
+### 回到顶部 (`/回顶`)
+- 快速定位频道或帖子的第一条消息
+- 支持普通频道、论坛帖子和线程
 
-```
-DiscordBotHelper/
-├── cogs/               # Discord 机器人的各个功能模块
-│   ├── search.py      # 搜索相关功能
-│   └── top_message.py # 热门消息统计功能
-├── config/            # 配置文件目录
-│   └── config.py     # 机器人配置
-├── utils/            # 工具函数目录
-│   ├── message_finder.py      # 消息查找工具
-│   ├── pagination.py          # 分页显示工具
-│   ├── thread_embed_helper.py # 线程嵌入助手
-│   ├── embed_helper.py        # 消息嵌入助手
-│   ├── thread_stats.py        # 线程统计工具
-│   ├── helpers.py            # 通用辅助函数
-│   └── attachment_helper.py  # 附件处理工具
-├── main.py           # 机器人主程序
-└── requirements.txt  # 项目依赖
-```
+## 技术特性
+
+- 异步并发处理，提高搜索效率
+- 智能缓存机制，减少 API 调用
+- 完善的错误处理和日志记录
+- 优雅的权限检查和用户交互
+- 支持持久化视图
+- 模块化设计，易于扩展
+
+## 配置项
+
+主要配置参数（在 `config/config.py` 中）：
+- `MAX_MESSAGES_PER_SEARCH`: 单次搜索的最大消息数
+- `MESSAGES_PER_PAGE`: 每页显示的消息数
+- `REACTION_TIMEOUT`: 交互按钮的超时时间
+- `CONCURRENT_SEARCH_LIMIT`: 并发搜索限制
+- `EMBED_COLOR`: 消息嵌入的颜色主题
 
 ## 环境要求
 
-- Python 3.8 或更高版本
-- discord.py 1.7.0 或更高版本
-- python-dotenv 0.15.0 或更高版本
+- Python 3.8+
+- discord.py 2.0+
+- python-dotenv
 
 ## 安装步骤
 
-1. 克隆项目到本地：
+1. 克隆仓库
 ```bash
-git clone [项目地址]
-cd DiscordBotHelper
+git clone [repository-url]
 ```
 
-2. 安装依赖：
+2. 安装依赖
 ```bash
 pip install -r requirements.txt
 ```
 
-3. 配置环境变量：
-   - 复制 `.env.example` 文件为 `.env`
-   - 在 `.env` 文件中填入您的 Discord 机器人令牌：
-```
-DISCORD_TOKEN=your_discord_application_token
+3. 配置环境变量
+创建 `.env` 文件并设置：
+```env
+DISCORD_TOKEN=your_bot_token
 ```
 
-## 使用方法
-
-1. 启动机器人：
+4. 运行 Bot
 ```bash
 python main.py
 ```
 
-2. 机器人启动后，您可以在 Discord 服务器中使用以下功能：
-   - 搜索消息
-   - 查看热门消息统计
-   - 管理线程
-   - 处理文件附件
-   - 使用自定义嵌入消息
+## 必要的 Bot 权限
 
-## 命令列表
-
-具体命令列表和用法将在机器人启动后通过 Discord 的斜杠命令（/）显示。
-
-## 许可证
-
-本项目采用 MIT 许可证。详情请参见 [LICENSE](LICENSE) 文件。
-
-## 贡献
-
-欢迎提交 Issue 和 Pull Request 来帮助改进这个项目。
-
-## 作者
-
-mouguu
+- 查看频道
+- 发送消息
+- 嵌入链接
+- 添加反应
+- 读取消息历史
+- 使用外部表情符号
 
 ## 注意事项
 
-- 请确保您的 Discord 机器人具有适当的权限
-- 建议在使用前先在测试服务器中试用
-- 定期备份重要数据
+- Bot 需要足够的权限才能正常运行
+- 搜索结果会在 15 分钟后自动清理
+- 只有发起搜索的用户可以操作分页按钮
+- 部分功能可能需要管理员权限
+
+## 贡献指南
+
+欢迎提交 Issue 和 Pull Request 来帮助改进项目。
+
+## 许可证
+
+[添加你的许可证信息]
+```
