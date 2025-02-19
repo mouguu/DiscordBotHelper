@@ -12,7 +12,7 @@ from utils.pagination import MultiEmbedPaginationView
 from typing import List, Dict, Set
 import signal
 
-# Setup logging with more detailed formatting
+# 设置日志配置，包含详细的日志格式
 logging.basicConfig(
     level=LOG_LEVEL,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -20,18 +20,18 @@ logging.basicConfig(
 )
 logger = logging.getLogger('discord_bot')
 
-# Set Discord logger to WARNING to reduce noise
+# 将 Discord 日志级别设置为 WARNING，以减少日志噪声
 logging.getLogger('discord').setLevel(logging.WARNING)
 logging.getLogger('discord.http').setLevel(logging.WARNING)
 
-# Load environment variables
+# 加载环境变量
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
 
-# Add debug logging for token validation (only showing first 10 chars)
+# 调试日志：仅显示令牌的前10个字符，以确保令牌加载成功
 if TOKEN:
     logger.info(f"Token loaded successfully (starts with: {TOKEN[:10]}...)")
-    # Validate token format
+    # 验证令牌格式是否正确
     token_parts = TOKEN.split('.')
     if len(token_parts) != 3:
         logger.error("Invalid token format - should have 3 parts separated by dots")
@@ -42,7 +42,7 @@ else:
 
 class QianBot(commands.Bot):
     def __init__(self):
-        # 设置所有必要的intents
+        # 设置所有必要的意图
         intents = discord.Intents.default()
         intents.message_content = True
         intents.guilds = True
@@ -55,20 +55,20 @@ class QianBot(commands.Bot):
             guild_ready_timeout=10
         )
         
-        # 初始化缓存和状态
+        # 初始化扩展和状态信息
         self.initial_extensions: List[str] = [
             'cogs.search',
-            'cogs.top_message'  # 保留这个，因为我们还需要这个cog
+            'cogs.top_message'  # 保留此扩展，因为我们仍然需要此 cog
         ]
-        self._ready = asyncio.Event()
-        self.persistent_views_added = False
-        self._guild_settings: Dict[int, Dict] = {}
-        self._cached_commands: Set[str] = set()
-        self._startup_time = None
+        self._ready = asyncio.Event()  # 标记 bot 是否已经准备好
+        self.persistent_views_added = False  # 标记是否已添加持久化视图
+        self._guild_settings: Dict[int, Dict] = {}  # 用于存储每个服务器的设置
+        self._cached_commands: Set[str] = set()  # 缓存已同步的命令
+        self._startup_time = None  # 启动时间记录
         logger.info("Bot initialized with required intents")
 
     async def setup_hook(self):
-        """A coroutine to be called to setup the bot"""
+        """设置钩子，在启动时调用此协程进行初始化操作"""
         try:
             start_time = asyncio.get_event_loop().time()
             
@@ -79,7 +79,7 @@ class QianBot(commands.Bot):
             await asyncio.gather(*load_extension_tasks)
             logger.info(f"Loaded {len(self.initial_extensions)} extensions")
 
-            # 同步命令
+            # 同步命令到 Discord
             logger.info("Starting command sync with Discord...")
             try:
                 synced_commands = await self.tree.sync()
@@ -106,13 +106,13 @@ class QianBot(commands.Bot):
             raise
 
     async def on_ready(self):
-        """When the bot is ready, this runs."""
+        """当 bot 启动完成时调用"""
         if self._ready.is_set():
             return
 
         self._ready.set()
         
-        # 收集并记录服务器信息
+        # 收集并记录所有已连接服务器的信息
         guild_info = []
         for guild in self.guilds:
             bot_member = guild.get_member(self.user.id)
@@ -144,7 +144,7 @@ class QianBot(commands.Bot):
         logger.info('Bot is fully ready!')
 
     async def close(self):
-        """Clean up resources before shutdown"""
+        """关闭时进行清理操作"""
         logger.info("Bot is shutting down...")
         # 清理缓存和资源
         self._guild_settings.clear()
@@ -153,7 +153,7 @@ class QianBot(commands.Bot):
 
 bot = QianBot()
 
-# 添加信号处理
+# 添加信号处理，处理中断或终止信号
 def signal_handler(sig, frame):
     logger.info(f"Received signal {sig}, initiating shutdown...")
     asyncio.create_task(bot.close())
@@ -163,13 +163,13 @@ signal.signal(signal.SIGTERM, signal_handler)
 
 @bot.tree.error
 async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
-    """Global error handler for application commands"""
+    """全局应用命令错误处理器"""
     error_msg = str(error)
     command_name = interaction.command.name if interaction.command else "未知命令"
     
     logger.error(f"Command '{command_name}' error: {error_msg}", exc_info=True)
     
-    # 对不同类型的错误提供不同的用户提示
+    # 根据错误类型返回不同的提示信息
     if isinstance(error, app_commands.CommandOnCooldown):
         await interaction.response.send_message(
             f"命令冷却中，请在 {error.retry_after:.1f} 秒后重试",
@@ -187,7 +187,7 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
         )
 
 def main():
-    """Main entry point for the bot."""
+    """启动 bot 的主入口"""
     try:
         logger.info("Starting bot...")
         bot.run(TOKEN, log_handler=None)
