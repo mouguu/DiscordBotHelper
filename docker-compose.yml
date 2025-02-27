@@ -1,0 +1,36 @@
+version: '3.8'
+
+services:
+  discord_bot:
+    build: .
+    restart: unless-stopped
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    environment:
+      - DISCORD_TOKEN=${DISCORD_TOKEN}
+      - PYTHONUNBUFFERED=1
+      - CONFIG_MODE=large_server
+    depends_on:
+      - redis
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.socket().connect((\"localhost\", 8080))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+  
+  redis:
+    image: redis:alpine
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  redis_data: 
