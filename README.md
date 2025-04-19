@@ -1,121 +1,166 @@
-# Discord论坛搜索机器人
+# Discord Forum Search Bot
 
-一个功能强大的Discord机器人，专为大型服务器设计，提供高级论坛帖子搜索和内容管理功能。
+A powerful Discord bot designed for large servers, providing advanced forum post searching and content management features.
 
-## 功能特点
+## Features
 
-- **高级搜索语法**：支持AND、OR、NOT等复杂逻辑操作符
-- **实时帖子搜索**：快速检索论坛帖子内容
-- **分页浏览结果**：直观的界面控制，浏览大量搜索结果
-- **标签过滤**：支持按标签筛选帖子
-- **自动完成建议**：输入时提供智能建议
-- **大型服务器优化**：专为高流量大型服务器(10000+用户)设计
+- **Advanced Search Syntax**: Supports complex logical operators like AND, OR, NOT, and exact phrase matching (`"..."`) via `utils/search_query_parser.py`.
+- **Forum Post Search**: Quickly retrieves and filters posts within specified forum channels (`cogs/search.py`).
+- **Tag Filtering**: Allows searching based on included or excluded tags.
+- **Author Filtering**: Filters search results by original poster or excludes specific authors.
+- **Date Range Filtering**: Narrows down searches to specific time periods.
+- **Result Sorting**: Sorts results by reactions, replies, post time, or last activity.
+- **Paginated Results**: Displays search results in interactive paginated embeds (`utils/pagination.py`).
+- **Performance Statistics**: Provides commands to view bot and server performance metrics (`cogs/stats.py`: `/bot_stats`, `/server_stats`).
+- **Back to Top**: Quickly jumps to the first message of a channel or thread (`cogs/top_message.py`: `/back_to_top`).
+- **Autocomplete**: Offers intelligent suggestions for forum names and tags during command input.
+- **Caching**: Utilizes in-memory caching for thread statistics (`utils/thread_stats.py`) to improve performance.
+- **Docker Support**: Includes `Dockerfile` and `docker-compose.yml` for containerized deployment, including Redis for potential advanced caching.
 
-## 安装说明
+## Requirements
 
-### 环境要求
 - Python 3.11.x
-- Discord.py v2.3+
-- 机器人需要的权限：
-  - 读取消息
-  - 发送消息
-  - 嵌入链接
-  - 添加反应
-  - 读取消息历史
+- discord.py v2.3+ (See `requirements.txt`)
+- Docker and Docker Compose (Optional, for containerized deployment)
+- Redis (Optional, used in the provided `docker-compose.yml`)
+- Required Bot Permissions (Intents enabled in `main.py`):
+  - Read Messages / View Channel
+  - Send Messages
+  - Embed Links
+  - Add Reactions
+  - Read Message History
+  - Manage Threads (for tag autocomplete involving moderated tags)
+  - Members Intent (for user information)
+  - Message Content Intent (for reading message content for search)
 
-### 安装步骤
+## Installation
 
-1. 克隆项目仓库：
-```bash
-git clone https://github.com/yourusername/discord-forum-search-bot.git
-cd discord-forum-search-bot
-```
+### Standard Setup
 
-2. 安装依赖项：
-```bash
-pip install -r requirements.txt
-```
+1. Clone the project repository:
 
-3. 创建并配置环境变量文件(`.env`)：
-```
-DISCORD_TOKEN=your_bot_token_here
-```
+   ```bash
+   git clone https://github.com/yourusername/discord-forum-search-bot.git # Replace with your repo URL
+   cd discord-forum-search-bot
+   ```
 
-4. 运行机器人：
-```bash
-python main.py
-```
+2. Install dependencies:
 
-## 使用指南
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-### 搜索命令
+3. Create and configure the environment file (`.env`) in the project root:
 
-基本搜索：
-```
-/forum_search forum_name:[论坛名称] query:[搜索关键词]
-```
+   ```env
+   DISCORD_TOKEN=your_bot_token_here
+   ```
 
-高级搜索语法：
-- AND搜索: `term1 AND term2` 或 `term1 & term2`
-- OR搜索: `term1 OR term2` 或 `term1 | term2`
-- NOT搜索: `NOT term` 或 `-term`
-- 精确短语: `"exact phrase"`
+4. Run the bot:
 
-标签过滤：
-```
-/forum_search forum_name:[论坛名称] tag1:[标签1] tag2:[标签2]
-```
+   ```bash
+   python main.py
+   ```
 
-排除标签：
-```
-/forum_search forum_name:[论坛名称] exclude_tag1:[排除标签1]
-```
+### Docker Compose Setup (Recommended for Caching/Large Servers)
 
-### 分页控制
+This method uses the provided `docker-compose.yml` to run the bot and a Redis service.
 
-- ⏮️: 第一页
-- ◀️: 上一页
-- ▶️: 下一页
-- ⏭️: 最后一页
-- 🔢: 跳转到指定页面
-- 🔄: 刷新结果
-- ❌: 关闭搜索结果
+1. Ensure Docker and Docker Compose are installed.
+2. Clone the project repository (if not already done).
+3. Create a `.env` file in the project root:
 
-## 大型服务器优化建议
+   ```env
+   DISCORD_TOKEN=your_bot_token_here
+   ```
 
-对于拥有10000+用户和大量帖子的服务器，建议以下配置：
+4. Build and start the services:
 
-1. 在`config/config.py`中调整以下参数：
-   - 降低 `MAX_MESSAGES_PER_SEARCH` 至合理值(如500-1000)
-   - 增加 `CACHE_TTL` 至5-10分钟
-   - 增加 `REACTION_TIMEOUT` 以延长会话有效期
+   ```bash
+   docker-compose up --build -d
+   ```
 
-2. 启用高级缓存设置：
-   - 设置 `USE_REDIS_CACHE=True` (需要额外安装Redis)
-   - 配置 `THREAD_CACHE_SIZE` 以适应服务器规模
+   - `--build` ensures the bot image is built.
+   - `-d` runs the containers in detached mode (in the background).
 
-3. 在服务器管理员设置中：
-   - 限制使用机器人的频道
-   - 设置合理的命令冷却时间
+5. To stop the services:
 
-## 性能监控
+   ```bash
+   docker-compose down
+   ```
 
-启用内置的性能监控：
-```
-/bot_stats
-```
-查看机器人运行状态、响应时间和资源使用情况。
+*Note: The `docker-compose.yml` sets the environment variable `CONFIG_MODE=large_server`. While the bot currently loads settings from `config/config.py`, this suggests an intended mechanism for loading different configurations. You may need to implement logic in `main.py` to read `CONFIG_MODE` and load settings from `config/large_server.py` accordingly if desired.*
+*The compose file also includes volume mounts for `./data` and `./logs` for persistence.*
 
-## 故障排除
+## Usage
 
-常见问题：
-- **机器人无响应**：检查TOKEN配置和网络连接
-- **搜索结果为空**：确认机器人有适当的频道访问权限
-- **加载缓慢**：考虑调整缓存和分页设置
-- **命令错误**：查看日志获取详细错误信息
+### Main Commands
 
-## 许可证
+- `/forum_search [forum_name] [options...]`: Searches posts in the specified forum.
+  - `query`: Keywords to search for (supports advanced syntax).
+  - `order`: How to sort results (e.g., "Reactions (High to Low)").
+  - `original_poster`: Filter by the user who created the post.
+  - `tag1`/`tag2`/`tag3`: Include posts with these tags.
+  - `exclude_word`: Keywords to exclude (comma-separated).
+  - `exclude_op`: Exclude posts created by this user.
+  - `exclude_tag1`/`exclude_tag2`: Exclude posts with these tags.
+  - `start_date`/`end_date`: Filter by date range (YYYY-MM-DD or relative like "7d").
+  - `min_reactions`/`min_replies`: Minimum number of reactions/replies.
+- `/search_syntax`: Displays help for the advanced search syntax.
+- `/back_to_top`: Posts a link to jump to the first message in the current channel/thread.
+- `/bot_stats`: Shows overall bot performance statistics.
+- `/server_stats`: Shows statistics specific to the current server.
+- `/search_history`: View your recent search history (stored in memory).
+
+### Search Syntax Guide
+
+The `query` parameter in `/forum_search` supports:
+
+- **Keywords**: `word1 word2` (Implicit AND - finds posts containing both words).
+- **OR**: `word1 OR word2` or `word1 | word2` (Finds posts containing either word).
+- **NOT**: `NOT word` or `-word` (Excludes posts containing the word).
+- **Exact Phrase**: `"exact phrase"` (Finds posts containing the exact phrase).
+- **Grouping**: `(word1 OR word2) AND word3` (Use parentheses for complex logic).
+
+See `/search_syntax` command for more details.
+
+### Pagination Controls
+
+When viewing search results:
+
+- ⏮️: Go to the first page.
+- ◀️: Go to the previous page.
+- 🔢: Enter a specific page number to jump to.
+- ▶️: Go to the next page.
+- ⏭️: Go to the last page.
+
+## Configuration
+
+- **`config/config.py`**: Defines the default bot settings (log level, default embed color, pagination settings, search limits, etc.). This is the configuration loaded by `main.py` by default.
+- **`config/large_server.py`**: Provides *example* settings tuned for larger servers (e.g., higher timeouts, potentially different limits, Redis cache settings). **This file is not loaded automatically by the current `main.py`.** See the Docker Compose note above regarding the `CONFIG_MODE` environment variable for potential integration.
+- **`.env`**: Used for sensitive information like the `DISCORD_TOKEN`.
+
+## Performance & Optimization
+
+- **Caching**: Basic thread statistics are cached in memory (`utils/thread_stats.py`). The `utils/advanced_cache.py` file and `config/large_server.py` include settings for Redis caching, which can be leveraged for larger scale deployments (especially when using the provided `docker-compose.yml`).
+- **Concurrency Limiting**: `config/config.py` sets a global limit (`CONCURRENT_SEARCH_LIMIT`) on simultaneous searches.
+- **Asynchronous Operations**: Uses `asyncio` for non-blocking operations.
+- **Efficient Data Fetching**: Attempts to fetch thread data efficiently.
+- **Docker Compose**: The provided `docker-compose.yml` simplifies deployment and includes Redis for potential caching enhancements.
+
+## Troubleshooting
+
+- **Bot Offline/Unresponsive**: Check the `.env` file for the correct `DISCORD_TOKEN`. Verify the bot process/container is running and check logs for errors. Ensure the required Intents are enabled in your Discord Developer Portal.
+- **Docker Compose Issues**: Ensure Docker and Docker Compose are installed correctly. Check container logs using `docker-compose logs discord_bot` or `docker-compose logs redis`.
+- **Commands Not Working**: Ensure the bot has the necessary permissions in the channel/server. Check logs for errors. Make sure cogs (`search`, `stats`, `top_message`) are loading correctly in `main.py`.
+- **Search Results Empty**: Verify the bot can view the target forum channel and read message history. Check your search terms and filters.
+- **Slow Searches**: On large servers, consider reducing `MAX_MESSAGES_PER_SEARCH` in `config/config.py` (or `large_server.py` if implemented). Check bot's resource usage (CPU/Memory).
+- **Errors During Search/Pagination**: Check the bot's logs (`logs/` directory if using volume mounts, or container logs) for detailed error messages.
+
+## License
+
 MIT License
 
-## 贡献指南
-欢迎贡献代码、报告问题或提出改进建议。请提交Pull Request或开Issue讨论。
+## Contributing
+
+Contributions, bug reports, and suggestions are welcome. Please feel free to open an Issue or Pull Request on the project's repository.

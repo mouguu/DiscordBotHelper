@@ -9,11 +9,11 @@ class TopMessage(commands.Cog):
 
     async def get_actual_channel(self, channel):
         """Helper function to get the actual channel from thread or forum"""
-        return channel  # 直接返回当前频道，让message_finder处理具体逻辑
+        return channel  # Directly return the current channel, let message_finder handle the specific logic
 
-    @app_commands.command(name="回顶", description="快速跳转到频道或帖子的第一条消息")
+    @app_commands.command(name="back_to_top", description="Quickly jump to the first message of a channel or thread")
     async def back_to_top(self, interaction: discord.Interaction):
-        """直接查找并显示第一条消息的链接"""
+        """Directly find and display the link to the first message"""
         await interaction.response.defer(ephemeral=True)
         
         channel = interaction.channel
@@ -21,34 +21,34 @@ class TopMessage(commands.Cog):
         first_message = await find_first_message(actual_channel)
         
         if first_message:
-            # 创建一个包含链接按钮的嵌入消息
+            # Create an embed message containing a link button
             embed = discord.Embed(
-                title="找到最初的消息",
-                description="点击下方按钮跳转到最初的消息",
+                title="Found the first message",
+                description="Click the button below to jump to the first message",
                 color=discord.Color.green()
             )
             
-            # 创建一个包含链接按钮的视图
+            # Create a view containing a link button
             view = discord.ui.View()
             view.add_item(
                 discord.ui.Button(
                     style=discord.ButtonStyle.link,
-                    label="点击跳转",
+                    label="Click to Jump",
                     emoji="🔗",
                     url=first_message.jump_url
                 )
             )
             
-            # 添加时间和作者信息
+            # Add time and author information
             embed.add_field(
-                name="发送时间",
+                name="Sent Time",
                 value=discord.utils.format_dt(first_message.created_at, "R"),
                 inline=True
             )
             
             if first_message.author:
                 embed.add_field(
-                    name="帖子作者",
+                    name="Post Author",
                     value=first_message.author.mention,
                     inline=True
                 )
@@ -59,10 +59,10 @@ class TopMessage(commands.Cog):
                 ephemeral=True
             )
         else:
-            # 创建错误提示的嵌入消息
+            # Create an error embed message
             error_embed = discord.Embed(
-                title="❌ 未找到消息",
-                description="无法找到最初的消息，这可能是因为：\n• 消息已被删除\n• 没有权限访问\n• 频道为空",
+                title="❌ Message Not Found",
+                description="Could not find the first message. This might be because:\n• The message has been deleted\n• No permission to access\n• The channel is empty",
                 color=discord.Color.red()
             )
             

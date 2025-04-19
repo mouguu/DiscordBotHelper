@@ -121,7 +121,7 @@ class Search(commands.Cog, name="search"):
         # User search history
         self._search_history = {}
         
-        # 添加查询解析器
+        # Add query parser
         self._query_parser = SearchQueryParser()
         
         # Concurrency control with dynamic adjustment
@@ -133,14 +133,14 @@ class Search(commands.Cog, name="search"):
         
         # Sorting functions mapping
         self._sort_functions = {
-            "最高反应降序": (lambda x: x['stats']['reaction_count'], True),
-            "最高反应升序": (lambda x: x['stats']['reaction_count'], False),
-            "总回复数降序": (lambda x: x['stats']['reply_count'], True),
-            "总回复数升序": (lambda x: x['stats']['reply_count'], False),
-            "发帖时间由新到旧": (lambda x: x['thread'].created_at, True),
-            "发帖时间由旧到新": (lambda x: x['thread'].created_at, False),
-            "最后活跃由新到旧": (lambda x: x['thread'].last_message.created_at if x['thread'].last_message else x['thread'].created_at, True),
-            "最后活跃由旧到新": (lambda x: x['thread'].last_message.created_at if x['thread'].last_message else x['thread'].created_at, False)
+            "Reactions (High to Low)": (lambda x: x['stats']['reaction_count'], True),
+            "Reactions (Low to High)": (lambda x: x['stats']['reaction_count'], False),
+            "Replies (High to Low)": (lambda x: x['stats']['reply_count'], True),
+            "Replies (Low to High)": (lambda x: x['stats']['reply_count'], False),
+            "Post Time (Newest First)": (lambda x: x['thread'].created_at, True),
+            "Post Time (Oldest First)": (lambda x: x['thread'].created_at, False),
+            "Last Active (Newest First)": (lambda x: x['thread'].last_message.created_at if x['thread'].last_message else x['thread'].created_at, True),
+            "Last Active (Oldest First)": (lambda x: x['thread'].last_message.created_at if x['thread'].last_message else x['thread'].created_at, False)
         }
         
         # Background tasks
@@ -219,37 +219,37 @@ class Search(commands.Cog, name="search"):
         return processed
     
     def _check_keywords(self, content: str, search_query: str, exclude_keywords: List[str]) -> bool:
-        """使用高级搜索语法检查内容是否匹配"""
+        """Check if content matches using advanced search syntax"""
         if not content:
             return not search_query
         
         content_lower = content.lower()
         
-        # 先检查排除关键词
+        # First, check excluded keywords
         if exclude_keywords and any(keyword in content_lower for keyword in exclude_keywords):
             return False
         
-        # 如果没有搜索查询，则匹配成功
+        # If there is no search query, match successfully
         if not search_query:
             return True
         
-        # 解析并评估搜索查询
+        # Parse and evaluate the search query
         query_tree = self._query_parser.parse_query(search_query)
         
-        # 简单查询使用现有逻辑
+        # Use existing logic for simple queries
         if query_tree["type"] == "simple":
             return all(keyword in content_lower for keyword in query_tree["keywords"])
         
-        # 高级查询使用语法树评估
+        # Use syntax tree evaluation for advanced queries
         if query_tree["type"] == "advanced":
             return self._query_parser.evaluate(query_tree["tree"], content)
         
-        # 空查询始终匹配
+        # Empty query always matches
         if query_tree["type"] == "empty":
             return True
         
-        # 未知查询类型
-        self._logger.warning(f"未知查询类型: {query_tree['type']}")
+        # Unknown query type
+        self._logger.warning(f"Unknown query type: {query_tree['type']}")
         return False
     
     async def _process_single_thread(self, thread: discord.Thread, conditions: Dict, 
@@ -423,10 +423,10 @@ class Search(commands.Cog, name="search"):
             if cancel_event and cancel_event.is_set():
                 await progress_message.edit(
                     embed=self.embed_builder.create_warning_embed(
-                        "搜索已取消",
-                        f"✓ 已处理: {processed_count} 个帖子\n"
-                        f"📊 匹配结果: {len(filtered_results)} 个\n"
-                        f"⏱️ 用时: {(datetime.now() - start_time).total_seconds():.1f} 秒"
+                        "Search cancelled",
+                        f"✓ Processed: {processed_count} posts\n"
+                        f"📊 Matched results: {len(filtered_results)}\n"
+                        f"⏱️ Time taken: {(datetime.now() - start_time).total_seconds():.1f} s"
                     )
                 )
                 return filtered_results
@@ -435,10 +435,10 @@ class Search(commands.Cog, name="search"):
             if len(filtered_results) >= max_results:
                 await progress_message.edit(
                     embed=self.embed_builder.create_info_embed(
-                        "搜索超出上限",
-                        f"🔍 已达到最大结果数 ({max_results})\n"
-                        f"✓ 已处理: {processed_count} 个帖子\n"
-                        f"⏱️ 用时: {(datetime.now() - start_time).total_seconds():.1f} 秒"
+                        "Search exceeded limit",
+                        f"🔍 Reached maximum results ({max_results})\n"
+                        f"✓ Processed: {processed_count} posts\n"
+                        f"⏱️ Time taken: {(datetime.now() - start_time).total_seconds():.1f} s"
                     )
                 )
                 return filtered_results
@@ -471,11 +471,11 @@ class Search(commands.Cog, name="search"):
                 if (current_time - last_update_time).total_seconds() >= 1.5:
                     await progress_message.edit(
                         embed=self.embed_builder.create_info_embed(
-                            "搜索进行中",
-                            f"✓ 已处理: {processed_count} 个帖子\n"
-                            f"📊 匹配结果: {len(filtered_results)} 个\n"
-                            f"⏱️ 用时: {elapsed_time:.1f} 秒\n"
-                            f"📦 已处理 {batch_count} 批存档帖子"
+                            "Search in progress",
+                            f"✓ Processed: {processed_count} posts\n"
+                            f"📊 Matched results: {len(filtered_results)}\n"
+                            f"⏱️ Time taken: {elapsed_time:.1f} s\n"
+                            f"📦 Processed {batch_count} batches of archived posts"
                         )
                     )
                     last_update_time = current_time
@@ -491,11 +491,11 @@ class Search(commands.Cog, name="search"):
                 if (current_time - last_update_time).total_seconds() >= 2:
                     await progress_message.edit(
                         embed=self.embed_builder.create_warning_embed(
-                            "搜索进行中",
-                            f"❌ 批次 {batch_count} 出现错误\n"
-                            f"✓ 已处理: {processed_count} 个帖子\n"
-                            f"📊 当前结果: {len(filtered_results)} 个\n"
-                            f"⏳ 尝试继续搜索..."
+                            "Search in progress",
+                            f"❌ Error occurred in batch {batch_count}\n"
+                            f"✓ Processed: {processed_count} posts\n"
+                            f"📊 Current results: {len(filtered_results)}\n"
+                            f"⏳ Trying to continue search..."
                         )
                     )
                     last_update_time = current_time
@@ -560,73 +560,73 @@ class Search(commands.Cog, name="search"):
         # Keep only recent searches
         self._search_history[user_id] = self._search_history[user_id][:10]
     
-    @app_commands.command(name="search_syntax", description="显示高级搜索语法说明")
+    @app_commands.command(name="search_syntax", description="Show advanced search syntax instructions")
     @app_commands.guild_only()
     async def search_syntax(self, interaction: discord.Interaction):
-        """显示高级搜索语法帮助"""
+        """Show advanced search syntax help"""
         embed = discord.Embed(
-            title="高级搜索语法指南",
-            description="论坛搜索支持以下高级语法功能：",
+            title="Advanced Search Syntax Guide",
+            description="Forum search supports the following advanced syntax features:",
             color=EMBED_COLOR
         )
         
         embed.add_field(
-            name="基本关键词",
-            value="输入多个关键词会匹配同时包含所有关键词的帖子（AND逻辑）\n"
-                  "例如：`问题 解决方案`",
+            name="Basic Keywords",
+            value="Entering multiple keywords will match posts containing all keywords (AND logic)\n"
+                  "Example: `issue solution`",
             inline=False
         )
         
         embed.add_field(
-            name="OR 操作符",
-            value="使用 `OR` 或 `|` 匹配任一关键词\n"
-                  "例如：`解决方案 OR 替代方法`\n"
-                  "例如：`主题 | 内容 | 标题`",
+            name="OR Operator",
+            value="Use `OR` or `|` to match any keyword\n"
+                  "Example: `solution OR workaround`\n"
+                  "Example: `topic | content | title`",
             inline=False
         )
         
         embed.add_field(
-            name="NOT 操作符",
-            value="使用 `NOT` 或 `-` 排除包含某关键词的帖子\n"
-                  "例如：`问题 NOT 已解决`\n"
-                  "例如：`问题 -已解决`",
+            name="NOT Operator",
+            value="Use `NOT` or `-` to exclude posts containing a specific keyword\n"
+                  "Example: `issue NOT resolved`\n"
+                  "Example: `issue -resolved`",
             inline=False
         )
         
         embed.add_field(
-            name="精确短语匹配",
-            value="使用引号 `\"...\"` 进行精确短语匹配\n"
-                  "例如：`\"完整短语匹配\"`",
+            name="Exact Phrase Matching",
+            value="Use quotes `\"...\"` for exact phrase matching\n"
+                  "Example: `\"complete phrase match\"`",
             inline=False
         )
         
         embed.add_field(
-            name="组合使用",
-            value="可以组合使用多种操作符\n"
-                  "例如：`(主题 | 内容) NOT \"已解决\"`",
+            name="Combined Usage",
+            value="Multiple operators can be used in combination\n"
+                  "Example: `(topic | content) NOT \"resolved\"`",
             inline=False
         )
         
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @app_commands.command(name="forum_search", description="搜索论坛帖子")
+    @app_commands.command(name="forum_search", description="Search forum posts")
     @app_commands.guild_only()
     @app_commands.describe(
-        forum_name="选择要搜索的论坛分区",
-        order="结果排序方式",
-        original_poster="指定的发帖人（选择成员）",
-        tag1="选择要搜索的第一个标签",
-        tag2="选择要搜索的第二个标签",
-        tag3="选择要搜索的第三个标签",
-        search_word="搜索关键词（支持高级语法：OR, AND, NOT, \"精确短语\"）",
-        exclude_word="排除关键词（用逗号分隔）",
-        exclude_op="排除的作者（选择成员）",
-        exclude_tag1="选择要排除的第一个标签",
-        exclude_tag2="选择要排除的第二个标签",
-        start_date="开始日期 (YYYY-MM-DD 或 7d 表示最近7天)",
-        end_date="结束日期 (YYYY-MM-DD)",
-        min_reactions="最低反应数",
-        min_replies="最低回复数"
+        forum_name="Select the forum channel to search",
+        order="Result sorting method",
+        original_poster="Specified original poster (select member)",
+        tag1="Select the first tag to search for",
+        tag2="Select the second tag to search for",
+        tag3="Select the third tag to search for",
+        search_word="Search keywords (supports advanced syntax: OR, AND, NOT, \"exact phrase\")",
+        exclude_word="Exclude keywords (comma-separated)",
+        exclude_op="Excluded author (select member)",
+        exclude_tag1="Select the first tag to exclude",
+        exclude_tag2="Select the second tag to exclude",
+        start_date="Start date (YYYY-MM-DD or 7d for the last 7 days)",
+        end_date="End date (YYYY-MM-DD)",
+        min_reactions="Minimum reactions",
+        min_replies="Minimum replies"
     )
     @app_commands.choices(order=[
         app_commands.Choice(name=option, value=option)
@@ -636,7 +636,7 @@ class Search(commands.Cog, name="search"):
         self,
         interaction: discord.Interaction,
         forum_name: str,
-        order: str = "最高反应降序",
+        order: str = "Reactions (High to Low)",
         original_poster: Optional[discord.User] = None,
         tag1: Optional[str] = None,
         tag2: Optional[str] = None,
@@ -651,14 +651,14 @@ class Search(commands.Cog, name="search"):
         min_reactions: Optional[int] = None,
         min_replies: Optional[int] = None
     ):
-        """搜索论坛帖子的命令实现（优化版）"""
+        """Command implementation for searching forum posts (optimized version)"""
         try:
             self._logger.info(f"Search command invoked - User: {interaction.user}")
             
             # Permission check
             if not interaction.guild:
                 await interaction.response.send_message(
-                    embed=self.embed_builder.create_error_embed("命令错误", "该命令只能在服务器中使用"),
+                    embed=self.embed_builder.create_error_embed("Command Error", "This command can only be used in a server"),
                     ephemeral=True
                 )
                 return
@@ -666,7 +666,7 @@ class Search(commands.Cog, name="search"):
             permissions = interaction.channel.permissions_for(interaction.guild.me)
             if not (permissions.send_messages and permissions.embed_links):
                 await interaction.response.send_message(
-                    embed=self.embed_builder.create_error_embed("权限错误", "Bot缺少必要权限，需要：发送消息、嵌入链接权限"),
+                    embed=self.embed_builder.create_error_embed("Permission Error", "Bot lacks necessary permissions: Send Messages, Embed Links"),
                     ephemeral=True
                 )
                 return
@@ -686,7 +686,7 @@ class Search(commands.Cog, name="search"):
             forum_channel = interaction.guild.get_channel(int(forum_name))
             if not isinstance(forum_channel, discord.ForumChannel):
                 await interaction.followup.send(
-                    embed=self.embed_builder.create_error_embed("搜索错误", "未找到指定的论坛分区"),
+                    embed=self.embed_builder.create_error_embed("Search Error", "Specified forum channel not found"),
                     ephemeral=True
                 )
                 return
@@ -699,19 +699,19 @@ class Search(commands.Cog, name="search"):
             if start_date:
                 start_datetime = self._parse_date(start_date)
                 if not start_datetime:
-                    date_error = f"无法解析开始日期: {start_date}"
+                    date_error = f"Could not parse start date: {start_date}"
             
             if end_date:
                 end_datetime = self._parse_date(end_date)
                 if not end_datetime:
-                    date_error = f"无法解析结束日期: {end_date}"
+                    date_error = f"Could not parse end date: {end_date}"
                 else:
                     # Include the entire end date
                     end_datetime = end_datetime + timedelta(days=1, microseconds=-1)
             
             if date_error:
                 await interaction.followup.send(
-                    embed=self.embed_builder.create_error_embed("日期格式错误", date_error + "\n请使用 YYYY-MM-DD 格式或相对日期（例如 7d 表示最近7天）"),
+                    embed=self.embed_builder.create_error_embed("Date Format Error", date_error + "\nPlease use YYYY-MM-DD format or relative dates (e.g., 7d for the last 7 days)"),
                     ephemeral=True
                 )
                 return
@@ -733,35 +733,35 @@ class Search(commands.Cog, name="search"):
             # Generate search condition summary
             condition_summary = []
             if search_conditions['search_tags']:
-                condition_summary.append(f"🏷️ 包含标签: {', '.join(search_conditions['search_tags'])}")
+                condition_summary.append(f"🏷️ Included tags: {', '.join(search_conditions['search_tags'])}")
             if search_conditions['exclude_tags']:
-                condition_summary.append(f"🚫 排除标签: {', '.join(search_conditions['exclude_tags'])}")
+                condition_summary.append(f"🚫 Excluded tags: {', '.join(search_conditions['exclude_tags'])}")
             if search_conditions['search_query']:
-                condition_summary.append(f"🔍 关键词: {search_conditions['search_query']}")
+                condition_summary.append(f"🔍 Keywords: {search_conditions['search_query']}")
             if search_conditions['exclude_keywords']:
-                condition_summary.append(f"❌ 排除词: {', '.join(search_conditions['exclude_keywords'])}")
+                condition_summary.append(f"❌ Excluded words: {', '.join(search_conditions['exclude_keywords'])}")
             if original_poster:
-                condition_summary.append(f"👤 发帖人: {original_poster.display_name}")
+                condition_summary.append(f"👤 Original poster: {original_poster.display_name}")
             if exclude_op:
-                condition_summary.append(f"🚷 排除发帖人: {exclude_op.display_name}")
+                condition_summary.append(f"🚷 Excluded poster: {exclude_op.display_name}")
             if start_datetime:
-                condition_summary.append(f"📅 起始日期: {start_datetime.strftime('%Y-%m-%d')}")
+                condition_summary.append(f"📅 Start date: {start_datetime.strftime('%Y-%m-%d')}")
             if end_datetime:
-                condition_summary.append(f"📅 结束日期: {end_datetime.strftime('%Y-%m-%d')}")
+                condition_summary.append(f"📅 End date: {end_datetime.strftime('%Y-%m-%d')}")
             if min_reactions is not None:
-                condition_summary.append(f"👍 最低反应数: {min_reactions}")
+                condition_summary.append(f"👍 Minimum reactions: {min_reactions}")
             if min_replies is not None:
-                condition_summary.append(f"💬 最低回复数: {min_replies}")
+                condition_summary.append(f"💬 Minimum replies: {min_replies}")
             
-            conditions_text = "\n".join(condition_summary) if condition_summary else "无特定搜索条件"
+            conditions_text = "\n".join(condition_summary) if condition_summary else "No specific search criteria"
 
             # Create cancel button for progress message
-            cancel_button = discord.ui.Button(label="取消搜索", style=discord.ButtonStyle.danger)
+            cancel_button = discord.ui.Button(label="Cancel Search", style=discord.ButtonStyle.danger)
             
             async def cancel_callback(btn_interaction):
                 if search_id in self._active_searches:
                     self._active_searches[search_id]["cancel_event"].set()
-                    await btn_interaction.response.send_message("搜索已取消", ephemeral=True)
+                    await btn_interaction.response.send_message("Search cancelled", ephemeral=True)
             
             cancel_button.callback = cancel_callback
             cancel_view = discord.ui.View(timeout=300)
@@ -770,8 +770,8 @@ class Search(commands.Cog, name="search"):
             # Send initial progress message
             progress_message = await interaction.followup.send(
                 embed=self.embed_builder.create_info_embed(
-                    "搜索进行中", 
-                    f"📋 搜索条件:\n{conditions_text}\n\n💫 正在搜索活动帖子..."
+                    "Search in progress", 
+                    f"📋 Search criteria:\n{conditions_text}\n\n💫 Searching active posts..."
                 ),
                 view=cancel_view,
                 ephemeral=True
@@ -796,21 +796,21 @@ class Search(commands.Cog, name="search"):
                     elapsed_time = (datetime.now() - start_time).total_seconds()
                     await progress_message.edit(
                         embed=self.embed_builder.create_info_embed(
-                            "搜索进行中",
-                            f"✓ 已处理活动帖子: {processed_count} 个\n"
-                            f"📊 匹配结果: {len(filtered_results)} 个\n"
-                            f"⏱️ 用时: {elapsed_time:.1f} 秒\n"
-                            f"⏳ 正在搜索存档帖子..."
+                            "Search in progress",
+                            f"✓ Processed active posts: {processed_count}\n"
+                            f"📊 Matching results: {len(filtered_results)}\n"
+                            f"⏱️ Time taken: {elapsed_time:.1f} s\n"
+                            f"⏳ Searching archived posts..."
                         )
                     )
                 except Exception as e:
                     self._logger.error(f"Error processing active threads: {e}")
                     await progress_message.edit(
                         embed=self.embed_builder.create_warning_embed(
-                            "搜索进行中",
-                            f"❌ 处理活动帖子时出现错误\n"
-                            f"📊 当前结果: {len(filtered_results)} 个\n"
-                            f"⏳ 继续搜索存档帖子..."
+                            "Search in progress",
+                            f"❌ Error occurred while processing active posts\n"
+                            f"📊 Current results: {len(filtered_results)}\n"
+                            f"⏳ Continuing to search archived posts..."
                         )
                     )
 
@@ -843,12 +843,12 @@ class Search(commands.Cog, name="search"):
             # Update final progress status
             await progress_message.edit(
                 embed=self.embed_builder.create_info_embed(
-                    "搜索完成",
-                    f"📋 搜索条件:\n{conditions_text}\n\n"
-                    f"✅ 共处理 {processed_count} 个帖子\n"
-                    f"📊 找到 {len(filtered_results)} 个匹配结果\n"
-                    f"⏱️ 总用时: {total_time:.1f} 秒\n"
-                    f"💫 正在生成结果页面..."
+                    "Search complete",
+                    f"📋 Search criteria:\n{conditions_text}\n\n"
+                    f"✅ Processed {processed_count} posts in total\n"
+                    f"📊 Found {len(filtered_results)} matching results\n"
+                    f"⏱️ Total time taken: {total_time:.1f} s\n"
+                    f"💫 Generating result pages..."
                 ),
                 view=None
             )
@@ -868,7 +868,7 @@ class Search(commands.Cog, name="search"):
                 filtered_results.sort(key=sort_key, reverse=reverse)
             else:
                 # Default sort by newest first
-                sort_key, reverse = self._sort_functions["发帖时间由新到旧"]
+                sort_key, reverse = self._sort_functions["Post Time (Newest First)"]
                 filtered_results.sort(key=sort_key, reverse=reverse)
 
             # Clean up active search
@@ -877,7 +877,7 @@ class Search(commands.Cog, name="search"):
 
             if not filtered_results:
                 await interaction.followup.send(
-                    embed=self.embed_builder.create_warning_embed("无搜索结果", "未找到符合条件的帖子"),
+                    embed=self.embed_builder.create_warning_embed("No Search Results", "No posts found matching the criteria"),
                     ephemeral=True
                 )
                 return
@@ -906,7 +906,7 @@ class Search(commands.Cog, name="search"):
                     if first_message and first_message.content:
                         # Highlight search keywords in content
                         summary = truncate_text(first_message.content.strip(), 1000)
-                        embed.description = f"**帖子摘要:**\n{summary}"
+                        embed.description = f"**Post Summary:**\n{summary}"
 
                         # Add thumbnail from first image in message if available
                         thumbnail_url = self.attachment_processor.get_first_image(first_message)
@@ -915,22 +915,22 @@ class Search(commands.Cog, name="search"):
 
                     if thread.applied_tags:
                         tag_names = [tag.name for tag in thread.applied_tags]
-                        embed.add_field(name="标签", value=", ".join(tag_names), inline=True)
+                        embed.add_field(name="Tags", value=", ".join(tag_names), inline=True)
 
                     # Add statistics
                     reaction_count = stats.get('reaction_count', 0) or 0
                     reply_count = stats.get('reply_count', 0) or 0
                     embed.add_field(
-                        name="统计", 
+                        name="Statistics", 
                         value=f"👍 {reaction_count} | 💬 {reply_count}", 
                         inline=True
                     )
 
                     # Add timestamps
                     embed.add_field(
-                        name="时间",
-                        value=f"创建: {discord.utils.format_dt(thread.created_at, 'R')}\n"
-                              f"最后活跃: {discord.utils.format_dt(thread.last_message.created_at if thread.last_message else thread.created_at, 'R')}",
+                        name="Time",
+                        value=f"Created: {discord.utils.format_dt(thread.created_at, 'R')}\n"
+                              f"Last Active: {discord.utils.format_dt(thread.last_message.created_at if thread.last_message else thread.created_at, 'R')}",
                         inline=True
                     )
 
@@ -938,7 +938,7 @@ class Search(commands.Cog, name="search"):
                     total_items = len(filtered_results)
                     start_idx = page_number * MESSAGES_PER_PAGE + 1
                     end_idx = min((page_number + 1) * MESSAGES_PER_PAGE, total_items)
-                    embed.set_footer(text=f"第 {start_idx}-{end_idx} 个结果，共 {total_items} 个")
+                    embed.set_footer(text=f"Result {start_idx}-{end_idx} of {total_items}")
 
                     embeds.append(embed)
                 return embeds
@@ -958,19 +958,19 @@ class Search(commands.Cog, name="search"):
                     await paginator.start(interaction, initial_embeds)
                 else:
                     await interaction.followup.send(
-                        embed=self.embed_builder.create_error_embed("错误", "无法生成搜索结果页面"),
+                        embed=self.embed_builder.create_error_embed("Error", "Could not generate search result page"),
                         ephemeral=True
                     )
             else:
                 await interaction.followup.send(
-                    embed=self.embed_builder.create_warning_embed("无搜索结果", "未找到符合条件的帖子"),
+                    embed=self.embed_builder.create_warning_embed("No Search Results", "No posts found matching the criteria"),
                     ephemeral=True
                 )
 
         except Exception as e:
-            self._logger.error(f"Search command error: {str(e)}", exc_info=True)
+            self._logger.error(f"Search Error: {str(e)}", exc_info=True)
             await interaction.followup.send(
-                embed=self.embed_builder.create_error_embed("搜索错误", f"搜索过程中出现错误: {str(e)}\n请稍后重试"),
+                embed=self.embed_builder.create_error_embed("Search Error", f"An error occurred during the search: {str(e)}\nPlease try again later"),
                 ephemeral=True
             )
 
@@ -1014,7 +1014,7 @@ class Search(commands.Cog, name="search"):
             # Create choices
             choices = [
                 app_commands.Choice(
-                    name=f"#{channel.name}" + (" (最近)" if is_recent else ""),
+                    name=f"#{channel.name}" + (" (recent)" if is_recent else ""),
                     value=str(channel.id)
                 )
                 for channel, is_recent in forum_channels[:25]
@@ -1113,7 +1113,7 @@ class Search(commands.Cog, name="search"):
             self._logger.error(f"Tag autocomplete error: {str(e)}", exc_info=True)
             return []
 
-    @app_commands.command(name="search_history", description="查看你的搜索历史")
+    @app_commands.command(name="search_history", description="View your search history")
     @app_commands.guild_only()
     async def search_history(self, interaction: discord.Interaction):
         """Display user's search history"""
@@ -1122,20 +1122,20 @@ class Search(commands.Cog, name="search"):
             
             if user_id not in self._search_history or not self._search_history[user_id]:
                 await interaction.response.send_message(
-                    embed=self.embed_builder.create_info_embed("搜索历史", "你还没有进行过搜索"),
+                    embed=self.embed_builder.create_info_embed("Search History", "You haven't performed any searches yet"),
                     ephemeral=True
                 )
                 return
             
             # Create embed with search history
             embed = discord.Embed(
-                title="你的搜索历史",
-                description="以下是你最近的搜索记录",
+                title="Your Search History",
+                description="Here are your recent search records",
                 color=EMBED_COLOR
             )
             
             for i, search in enumerate(self._search_history[user_id][:5], 1):
-                forum_name = search.get('forum', '未知论坛')
+                forum_name = search.get('forum', 'Unknown Forum')
                 timestamp = search.get('timestamp', datetime.now())
                 results_count = search.get('results_count', 0)
                 duration = search.get('duration', 0)
@@ -1145,20 +1145,20 @@ class Search(commands.Cog, name="search"):
                 condition_parts = []
                 
                 if conditions.get('search_tags'):
-                    condition_parts.append(f"标签: {', '.join(conditions['search_tags'][:2])}" + 
+                    condition_parts.append(f"Tags: {', '.join(conditions['search_tags'][:2])}" + 
                                          ("..." if len(conditions['search_tags']) > 2 else ""))
                 
                 if conditions.get('search_query'):
-                    condition_parts.append(f"关键词: {conditions['search_query']}")
+                    condition_parts.append(f"Keywords: {conditions['search_query']}")
                 
                 if conditions.get('original_poster'):
-                    condition_parts.append(f"发帖人: {conditions['original_poster'].display_name}")
+                    condition_parts.append(f"Original Poster: {conditions['original_poster'].display_name}")
                 
-                conditions_text = " | ".join(condition_parts) if condition_parts else "无特定条件"
+                conditions_text = " | ".join(condition_parts) if condition_parts else "No specific criteria"
                 
                 embed.add_field(
                     name=f"{i}. {forum_name} ({discord.utils.format_dt(timestamp, 'R')})",
-                    value=f"条件: {conditions_text}\n结果: {results_count} 个 | 用时: {duration:.1f} 秒",
+                    value=f"Criteria: {conditions_text}\nResults: {results_count} items | Time taken: {duration:.1f} s",
                     inline=False
                 )
             
@@ -1167,7 +1167,7 @@ class Search(commands.Cog, name="search"):
         except Exception as e:
             self._logger.error(f"Search history command error: {str(e)}", exc_info=True)
             await interaction.response.send_message(
-                embed=self.embed_builder.create_error_embed("错误", "获取搜索历史失败"),
+                embed=self.embed_builder.create_error_embed("Error", "Failed to retrieve search history"),
                 ephemeral=True
             )
 

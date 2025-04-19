@@ -10,20 +10,20 @@ class DiscordEmbedBuilder:
     def __init__(self, color: int = 0x3498db):
         self.color = color
         self.attachment_processor = AttachmentProcessor()
-        self.ERROR_COLOR = 0xe74c3c    # 红色
-        self.SUCCESS_COLOR = 0x2ecc71   # 绿色
-        self.WARNING_COLOR = 0xf1c40f   # 黄色
-        self.INFO_COLOR = color         # 默认蓝色
+        self.ERROR_COLOR = 0xe74c3c    # Red
+        self.SUCCESS_COLOR = 0x2ecc71   # Green
+        self.WARNING_COLOR = 0xf1c40f   # Yellow
+        self.INFO_COLOR = color         # Default blue
 
     def format_timestamp(self, dt: datetime, include_time: bool = True) -> str:
-        """格式化时间戳"""
+        """Format timestamp"""
         try:
             if include_time:
                 return dt.strftime('%Y-%m-%d %H:%M')
             return dt.strftime('%Y-%m-%d')
         except Exception as e:
-            logger.error(f"格式化时间戳出错: {str(e)}")
-            return "未知时间"
+            logger.error(f"Error formatting timestamp: {str(e)}")
+            return "Unknown time"
 
     def create_thread_embed(
         self,
@@ -39,9 +39,9 @@ class DiscordEmbedBuilder:
         page_info: Optional[tuple] = None,
         compact: bool = False
     ) -> Optional[discord.Embed]:
-        """创建帖子的Embed"""
+        """Create embed for a thread"""
         try:
-            # 创建基础embed
+            # Create base embed
             embed = discord.Embed(
                 title=title[:256],
                 url=jump_url,
@@ -49,60 +49,60 @@ class DiscordEmbedBuilder:
                 timestamp=datetime.utcnow()
             )
 
-            # 设置作者信息
+            # Set author info
             if author:
                 embed.set_author(
                     name=author.display_name,
                     icon_url=author.display_avatar.url if hasattr(author, 'display_avatar') else None
                 )
 
-            # 创建描述内容
+            # Create description content
             description_parts = []
 
-            # 添加基本信息
+            # Add basic info
             if not compact:
                 description_parts.extend([
-                    f"📅 **发布时间：** {created_at.strftime('%Y-%m-%d %H:%M')}",
-                    f"🕒 **最后活动：** {last_active.strftime('%Y-%m-%d %H:%M')}",
-                    f"👍 **反应数：** {reactions_count}",
-                    f"🏷️ **标签：** {', '.join(tags) if tags else '无标签'}",
+                    f"📅 **Published Time:** {created_at.strftime('%Y-%m-%d %H:%M')}",
+                    f"🕒 **Last Active:** {last_active.strftime('%Y-%m-%d %H:%M')}",
+                    f"👍 **Reactions:** {reactions_count}",
+                    f"🏷️ **Tags:** {', '.join(tags) if tags else 'No tags'}",
                     "",
-                    "💬 **内容：**",
-                    summary[:1000] if summary else "无内容"
+                    "💬 **Content:**",
+                    summary[:1000] if summary else "No content"
                 ])
             else:
                 description_parts.extend([
                     f"⏰ {created_at.strftime('%Y-%m-%d %H:%M')} | 👍 {reactions_count}",
-                    f"🏷️ {', '.join(tags) if tags else '无标签'}"
+                    f"🏷️ {', '.join(tags) if tags else 'No tags'}"
                 ])
 
             embed.description = "\n".join(description_parts)
 
-            # 添加跳转链接
+            # Add jump link
             if not compact:
                 embed.add_field(
-                    name="跳转",
-                    value=f"[点击查看原帖]({jump_url})",
+                    name="Jump",
+                    value=f"[Click to view original post]({jump_url})",
                     inline=False
                 )
 
-            # 设置缩略图
+            # Set thumbnail
             if thumbnail_url:
                 embed.set_thumbnail(url=thumbnail_url)
 
-            # 设置页码信息
+            # Set page info
             if page_info and len(page_info) == 2:
                 current_page, total_pages = page_info
-                embed.set_footer(text=f"第 {current_page}/{total_pages} 页")
+                embed.set_footer(text=f"Page {current_page}/{total_pages}")
 
             return embed
 
         except Exception as e:
-            logger.error(f"创建帖子embed时出错: {str(e)}")
+            logger.error(f"Error creating thread embed: {str(e)}")
             return None
 
     def create_error_embed(self, title: str, description: str, show_timestamp: bool = True) -> discord.Embed:
-        """创建错误提示的Embed"""
+        """Create Embed for error message"""
         try:
             embed = discord.Embed(
                 title=f"❌ {title[:256]}",
@@ -113,15 +113,15 @@ class DiscordEmbedBuilder:
                 embed.timestamp = datetime.utcnow()
             return embed
         except Exception as e:
-            logger.error(f"创建错误embed时出错: {str(e)}")
+            logger.error(f"Error creating error embed: {str(e)}")
             return discord.Embed(
-                title="❌ 错误",
-                description="发生未知错误",
+                title="❌ Error",
+                description="An unknown error occurred",
                 color=self.ERROR_COLOR
             )
 
     def create_success_embed(self, title: str, description: str, show_timestamp: bool = True) -> discord.Embed:
-        """创建成功提示的Embed"""
+        """Create Embed for success message"""
         try:
             embed = discord.Embed(
                 title=f"✅ {title[:256]}",
@@ -132,11 +132,11 @@ class DiscordEmbedBuilder:
                 embed.timestamp = datetime.utcnow()
             return embed
         except Exception as e:
-            logger.error(f"创建成功embed时出错: {str(e)}")
-            return self.create_error_embed("错误", "无法创建成功提示")
+            logger.error(f"Error creating success embed: {str(e)}")
+            return self.create_error_embed("Error", "Could not create success message")
 
     def create_warning_embed(self, title: str, description: str, show_timestamp: bool = True) -> discord.Embed:
-        """创建警告提示的Embed"""
+        """Create Embed for warning message"""
         try:
             embed = discord.Embed(
                 title=f"⚠️ {title[:256]}",
@@ -147,11 +147,11 @@ class DiscordEmbedBuilder:
                 embed.timestamp = datetime.utcnow()
             return embed
         except Exception as e:
-            logger.error(f"创建警告embed时出错: {str(e)}")
-            return self.create_error_embed("错误", "无法创建警告提示")
+            logger.error(f"Error creating warning embed: {str(e)}")
+            return self.create_error_embed("Error", "Could not create warning message")
 
     def create_info_embed(self, title: str, description: str, show_timestamp: bool = True) -> discord.Embed:
-        """创建信息提示的Embed"""
+        """Create Embed for info message"""
         try:
             embed = discord.Embed(
                 title=f"ℹ️ {title[:256]}",
@@ -162,8 +162,8 @@ class DiscordEmbedBuilder:
                 embed.timestamp = datetime.utcnow()
             return embed
         except Exception as e:
-            logger.error(f"创建信息embed时出错: {str(e)}")
-            return self.create_error_embed("错误", "无法创建信息提示")
+            logger.error(f"Error creating info embed: {str(e)}")
+            return self.create_error_embed("Error", "Could not create info message")
 
     def add_field_if_exists(
         self,
@@ -172,7 +172,7 @@ class DiscordEmbedBuilder:
         value: Optional[Union[str, int, float]],
         inline: bool = True
     ) -> None:
-        """如果值存在则添加字段"""
+        """Add field if value exists"""
         if value is not None and str(value).strip():
             try:
                 embed.add_field(
@@ -181,42 +181,42 @@ class DiscordEmbedBuilder:
                     inline=inline
                 )
             except Exception as e:
-                logger.error(f"添加字段时出错: {str(e)}")
+                logger.error(f"Error adding field: {str(e)}")
 
     def add_message_attachments(self, embed: discord.Embed, message: discord.Message) -> None:
-        """添加消息中的附件到 embed"""
+        """Add attachments from message to embed"""
         try:
-            # 获取并验证图片URL
+            # Get and validate image URLs
             thumbnail_url = self.attachment_processor.get_first_image(message)
             all_images = self.attachment_processor.get_all_images(message)
             
-            # 添加缩略图（如果有效）
+            # Add thumbnail (if valid)
             if thumbnail_url:
                 try:
                     embed.set_thumbnail(url=thumbnail_url)
                 except discord.errors.InvalidArgument as e:
-                    logger.warning(f"无法设置缩略图，URL无效: {thumbnail_url}, 错误: {e}")
+                    logger.warning(f"Could not set thumbnail, URL invalid: {thumbnail_url}, Error: {e}")
             
-            # 添加所有图片链接（如果有多个）
+            # Add all image links (if multiple)
             if len(all_images) > 1:
                 try:
-                    # 为每个图片创建安全的链接文本
+                    # Create safe link text for each image
                     image_links = []
                     for i, url in enumerate(all_images):
-                        # 限制URL长度以防止过长的链接
+                        # Limit URL length to prevent overly long links
                         display_url = url[:100] + "..." if len(url) > 100 else url
-                        image_links.append(f"[图片 {i+1}]({url})")
+                        image_links.append(f"[Image {i+1}]({url})")
                     
-                    # 将链接分组以防止超过Discord的字段值限制（1024字符）
+                    # Group links to prevent exceeding Discord field value limit (1024 chars)
                     links_text = "\n".join(image_links)
                     if len(links_text) > 1024:
-                        # 如果超过限制，只显示前几个链接
+                        # If limit exceeded, show only the first few links
                         truncated_links = image_links[:5]
-                        links_text = "\n".join(truncated_links) + "\n*(更多图片未显示)*"
+                        links_text = "\n".join(truncated_links) + "\n*(More images not shown)*"
                     
-                    embed.add_field(name="附件图片", value=links_text, inline=False)
+                    embed.add_field(name="Attachment Images", value=links_text, inline=False)
                 except discord.errors.InvalidArgument as e:
-                    logger.warning(f"添加图片链接字段时出错: {e}")
+                    logger.warning(f"Error adding image links field: {e}")
                 
         except Exception as e:
-            logger.error(f"添加消息附件时出错: {str(e)}")
+            logger.error(f"Error adding message attachments: {str(e)}")

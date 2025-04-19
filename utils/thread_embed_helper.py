@@ -42,18 +42,18 @@ def create_thread_embed(thread: dict, index: int) -> discord.Embed:
     )
     
     # Add individual fields for a card-like layout.
-    embed.add_field(name="作者", value=author_mention, inline=True)
-    embed.add_field(name="回复", value=f"最高回复数: {highest_replies} | 回复数: {replies}", inline=True)
-    embed.add_field(name="发布时间", value=date, inline=True)
+    embed.add_field(name="Author", value=author_mention, inline=True)
+    embed.add_field(name="Replies", value=f"Highest Replies: {highest_replies} | Total Replies: {replies}", inline=True)
+    embed.add_field(name="Post Time", value=date, inline=True)
     
     if attachment:
         filename = os.path.basename(attachment)
-        embed.add_field(name="附件", value=f"[缩略图: `{filename}`]", inline=False)
+        embed.add_field(name="Attachment", value=f"[Thumbnail: `{filename}`]", inline=False)
     
-    embed.add_field(name="预览", value=f"*{preview}*", inline=False)
+    embed.add_field(name="Preview", value=f"*{preview}*", inline=False)
     
     if thread_url:
-        embed.add_field(name="链接", value=f"[点击查看帖子]({thread_url})", inline=False)
+        embed.add_field(name="Link", value=f"[Click to view post]({thread_url})", inline=False)
     
     # Set thumbnail if an attachment image exists.
     if attachment:

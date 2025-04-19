@@ -2,13 +2,13 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# 设置环境变量
+# Set environment variables
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
-# 安装依赖
+# Install dependencies
 COPY requirements.txt .
 RUN apt-get update && \
     apt-get install -y --no-install-recommends gcc libc6-dev && \
@@ -17,14 +17,14 @@ RUN apt-get update && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# 创建必要的目录
+# Create necessary directories
 RUN mkdir -p logs data
 
-# 复制代码
+# Copy code
 COPY . .
 
-# 配置日志目录权限
+# Configure log directory permissions
 RUN chmod -R 755 logs data
 
-# 运行机器人
+# Run the bot
 CMD ["python", "main.py"] 
