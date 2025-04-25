@@ -1,4 +1,4 @@
-# Discord Forum Search Bot
+# Discord Forum Search Enhancement Assistant
 
 A powerful Discord bot designed for large servers, providing advanced forum post searching and content management features.
 
