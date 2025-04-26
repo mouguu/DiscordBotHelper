@@ -1,137 +1,88 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-from typing import Optional, List, Dict, Tuple, Any, Union, AsyncGenerator
-import logging
-import re
-import pytz
-import uuid
+from typing import Optional, List, Dict, Tuple, Any, Union
+import logging, re, uuid, asyncio
 from functools import lru_cache
+from datetime import datetime, timedelta
+
 from config.config import (
-    MAX_MESSAGES_PER_SEARCH,
-    MESSAGES_PER_PAGE,
-    REACTION_TIMEOUT,
-    MAX_EMBED_FIELD_LENGTH,
-    EMBED_COLOR,
-    SEARCH_ORDER_OPTIONS,
-    CONCURRENT_SEARCH_LIMIT
+    MAX_MESSAGES_PER_SEARCH, MESSAGES_PER_PAGE,
+    EMBED_COLOR, SEARCH_ORDER_OPTIONS, CONCURRENT_SEARCH_LIMIT
 )
 from utils.helpers import truncate_text
 from utils.pagination import MultiEmbedPaginationView
 from utils.embed_helper import DiscordEmbedBuilder
 from utils.attachment_helper import AttachmentProcessor
 from utils.thread_stats import get_thread_stats
-import asyncio
-from datetime import datetime, timedelta
-from concurrent.futures import ThreadPoolExecutor
 from utils.search_query_parser import SearchQueryParser
 
 logger = logging.getLogger('discord_bot.search')
 
 class ThreadCache:
-    """Thread data caching system with TTL and automatic cleanup"""
-    
     def __init__(self, ttl: int = 300):
         self._cache = {}
         self._stats_cache = {}
-        self._ttl = ttl  # TTL in seconds
+        self._ttl = ttl
         self._last_cleanup = datetime.now().timestamp()
-        self._logger = logging.getLogger('discord_bot.search.cache')
-        self._logger.info(f"Thread cache initialized with TTL: {ttl}s")
     
     async def get_thread_stats(self, thread: discord.Thread) -> Dict:
-        """Get thread stats with caching"""
         cache_key = f"stats_{thread.id}"
         current_time = datetime.now().timestamp()
         
-        # Check cache first
-        if cache_key in self._stats_cache:
-            cached = self._stats_cache[cache_key]
-            if current_time - cached['timestamp'] < self._ttl:
-                return cached['data']
+        # Return cached value if valid
+        if cache_key in self._stats_cache and current_time - self._stats_cache[cache_key]['timestamp'] < self._ttl:
+            return self._stats_cache[cache_key]['data']
         
-        # Cache miss, fetch new data
+        # Cache miss - fetch and store
         try:
             stats = await get_thread_stats(thread)
-            self._stats_cache[cache_key] = {
-                'data': stats,
-                'timestamp': current_time
-            }
+            self._stats_cache[cache_key] = {'data': stats, 'timestamp': current_time}
             return stats
-        except Exception as e:
-            self._logger.error(f"Error getting stats for thread {thread.id}: {e}")
+        except Exception:
             return {'reaction_count': 0, 'reply_count': 0}
     
-    def store_thread_data(self, thread_id: int, data: Any) -> None:
-        """Store thread data in cache"""
-        self._cache[thread_id] = {
-            'data': data,
-            'timestamp': datetime.now().timestamp()
-        }
+    def store(self, thread_id: int, data: Any) -> None:
+        self._cache[thread_id] = {'data': data, 'timestamp': datetime.now().timestamp()}
     
-    def get_thread_data(self, thread_id: int) -> Optional[Any]:
-        """Get thread data from cache if not expired"""
-        if thread_id in self._cache:
-            entry = self._cache[thread_id]
-            if datetime.now().timestamp() - entry['timestamp'] < self._ttl:
-                return entry['data']
+    def get(self, thread_id: int) -> Optional[Any]:
+        if thread_id in self._cache and datetime.now().timestamp() - self._cache[thread_id]['timestamp'] < self._ttl:
+            return self._cache[thread_id]['data']
         return None
     
     async def cleanup(self) -> int:
-        """Remove expired entries from cache"""
-        # Only run cleanup periodically
         current_time = datetime.now().timestamp()
-        if current_time - self._last_cleanup < 60:  # Cleanup at most once per minute
+        if current_time - self._last_cleanup < 60:  # Max once per minute
             return 0
             
         self._last_cleanup = current_time
         
-        # Find expired entries
-        expired_thread_keys = [k for k, v in self._cache.items() 
-                             if current_time - v['timestamp'] > self._ttl]
-        expired_stats_keys = [k for k, v in self._stats_cache.items() 
-                            if current_time - v['timestamp'] > self._ttl]
+        # Find and remove expired entries
+        expired_thread = [k for k, v in self._cache.items() if current_time - v['timestamp'] > self._ttl]
+        expired_stats = [k for k, v in self._stats_cache.items() if current_time - v['timestamp'] > self._ttl]
         
-        # Remove expired entries
-        for key in expired_thread_keys:
-            del self._cache[key]
-        for key in expired_stats_keys:
-            del self._stats_cache[key]
+        for k in expired_thread: del self._cache[k]
+        for k in expired_stats: del self._stats_cache[k]
         
-        total_removed = len(expired_thread_keys) + len(expired_stats_keys)
-        if total_removed > 0:
-            self._logger.debug(f"Cache cleanup: removed {total_removed} expired entries")
-        
-        return total_removed
+        return len(expired_thread) + len(expired_stats)
 
 class Search(commands.Cog, name="search"):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.embed_builder = DiscordEmbedBuilder(EMBED_COLOR)
         self.attachment_processor = AttachmentProcessor()
-        self._logger = logger
-        self._logger.info("Search cog initialized")
         
-        # Enhanced caching
-        self._thread_cache = ThreadCache(ttl=300)  # 5 minutes cache
-        
-        # Active searches tracking for cancellation
+        # Core state
+        self._thread_cache = ThreadCache(ttl=300)
         self._active_searches = {}
-        
-        # User search history
         self._search_history = {}
-        
-        # Add query parser
         self._query_parser = SearchQueryParser()
+        self._search_semaphore = asyncio.Semaphore(CONCURRENT_SEARCH_LIMIT)
         
-        # Concurrency control with dynamic adjustment
-        self._max_concurrency = CONCURRENT_SEARCH_LIMIT
-        self._search_semaphore = asyncio.Semaphore(self._max_concurrency)
-        
-        # Compile common regex patterns
+        # Compiled patterns
         self._url_pattern = re.compile(r'https?://\S+')
         
-        # Sorting functions mapping
+        # Sorting functions map
         self._sort_functions = {
             "Reactions (High to Low)": (lambda x: x['stats']['reaction_count'], True),
             "Reactions (Low to High)": (lambda x: x['stats']['reaction_count'], False),
@@ -148,1028 +99,543 @@ class Search(commands.Cog, name="search"):
         self._search_cleanup_task = bot.loop.create_task(self._cleanup_searches_task())
     
     async def cog_unload(self):
-        """Clean up when cog is unloaded"""
-        if self._cache_cleanup_task:
-            self._cache_cleanup_task.cancel()
-        if self._search_cleanup_task:
-            self._search_cleanup_task.cancel()
+        # Cancel background tasks on unload
+        self._cache_cleanup_task and self._cache_cleanup_task.cancel()
+        self._search_cleanup_task and self._search_cleanup_task.cancel()
     
     async def _cleanup_cache_task(self):
-        """Periodically clean up cache"""
+        # Periodically clean up cache
         while not self.bot.is_closed():
-            try:
-                await self._thread_cache.cleanup()
-            except Exception as e:
-                self._logger.error(f"Error in cache cleanup: {e}")
-            await asyncio.sleep(60)  # Run every minute
+            try: await self._thread_cache.cleanup()
+            except Exception as e: logger.error(f"Cache cleanup error: {e}")
+            await asyncio.sleep(60) 
     
     async def _cleanup_searches_task(self):
-        """Clean up old searches"""
+        # Clean up old searches (older than 10 mins)
         while not self.bot.is_closed():
             try:
-                current_time = datetime.now()
-                expired_searches = []
-                
-                # Find searches older than 10 minutes
-                for search_id, search_info in self._active_searches.items():
-                    if (current_time - search_info["start_time"]).total_seconds() > 600:
-                        expired_searches.append(search_id)
-                
-                # Remove expired searches
-                for search_id in expired_searches:
-                    if search_id in self._active_searches:
-                        del self._active_searches[search_id]
-                
-                if expired_searches:
-                    self._logger.debug(f"Search cleanup: removed {len(expired_searches)} expired searches")
-            except Exception as e:
-                self._logger.error(f"Error in search cleanup: {e}")
-            await asyncio.sleep(300)  # Run every 5 minutes
+                now = datetime.now()
+                expired = [sid for sid, info in self._active_searches.items() 
+                           if (now - info["start_time"]).total_seconds() > 600]
+                for sid in expired: self._active_searches.pop(sid, None)
+                expired and logger.debug(f"Removed {len(expired)} expired searches")
+            except Exception as e: logger.error(f"Search cleanup error: {e}")
+            await asyncio.sleep(300)
     
     @lru_cache(maxsize=256)
     def _check_tags(self, thread_tags: Tuple[str], search_tags: Tuple[str], exclude_tags: Tuple[str]) -> bool:
-        """Check if thread tags match search conditions (with caching)"""
-        thread_tags_lower = tuple(tag.lower() for tag in thread_tags)
-        
-        # Check if search tags match (any required tag must be present)
-        if search_tags and not any(tag in thread_tags_lower for tag in search_tags):
-            return False
-        
-        # Check if any excluded tag is present
-        if exclude_tags and any(tag in thread_tags_lower for tag in exclude_tags):
-            return False
-        
-        return True
+        tags_lower = {tag.lower() for tag in thread_tags}
+        # Check inclusions and exclusions
+        return (not search_tags or any(tag in tags_lower for tag in search_tags)) and \
+               (not exclude_tags or not any(tag in tags_lower for tag in exclude_tags))
     
     def _preprocess_keywords(self, keywords: List[str]) -> List[str]:
-        """Preprocess search keywords for better matching"""
-        if not keywords:
-            return []
-        
-        # Clean and normalize keywords
-        processed = []
-        for keyword in keywords:
-            if not keyword or not keyword.strip():
-                continue
-            # Convert to lowercase and strip whitespace
-            cleaned = keyword.strip().lower()
-            if cleaned:
-                processed.append(cleaned)
-        
-        return processed
+        return [kw.strip().lower() for kw in keywords if kw and kw.strip()]
     
     def _check_keywords(self, content: str, search_query: str, exclude_keywords: List[str]) -> bool:
-        """Check if content matches using advanced search syntax"""
-        if not content:
-            return not search_query
-        
+        if not content: return not search_query
         content_lower = content.lower()
         
-        # First, check excluded keywords
-        if exclude_keywords and any(keyword in content_lower for keyword in exclude_keywords):
-            return False
-        
-        # If there is no search query, match successfully
-        if not search_query:
-            return True
-        
-        # Parse and evaluate the search query
-        query_tree = self._query_parser.parse_query(search_query)
-        
-        # Use existing logic for simple queries
-        if query_tree["type"] == "simple":
-            return all(keyword in content_lower for keyword in query_tree["keywords"])
-        
-        # Use syntax tree evaluation for advanced queries
-        if query_tree["type"] == "advanced":
-            return self._query_parser.evaluate(query_tree["tree"], content)
-        
-        # Empty query always matches
-        if query_tree["type"] == "empty":
-            return True
-        
-        # Unknown query type
-        self._logger.warning(f"Unknown query type: {query_tree['type']}")
-        return False
+        # Check exclusions first
+        if exclude_keywords and any(kw in content_lower for kw in exclude_keywords): return False
+        if not search_query: return True
+            
+        # Evaluate query tree
+        tree = self._query_parser.parse_query(search_query)
+        return (
+            all(kw in content_lower for kw in tree["keywords"]) if tree["type"] == "simple"
+            else self._query_parser.evaluate(tree["tree"], content) if tree["type"] == "advanced"
+            else True if tree["type"] == "empty"
+            else False # Logged unknown type handled by parser
+        )
     
     async def _process_single_thread(self, thread: discord.Thread, conditions: Dict, 
                                     cancel_event=None) -> Optional[Dict]:
-        """Process a single thread for search (optimized version)"""
-        try:
-            # Check cancellation
-            if cancel_event and cancel_event.is_set():
-                return None
+        if not thread or not thread.id or (cancel_event and cancel_event.is_set()): return None
+
+        async with self._search_semaphore:
+            # Pre-checks: Date range, Author, Tags
+            if (cond_val := conditions.get('start_date')) and thread.created_at < cond_val: return None
+            if (cond_val := conditions.get('end_date')) and thread.created_at > cond_val: return None
             
-            async with self._search_semaphore:
-                # Quick validation
-                if not thread or not thread.id:
-                    return None
-                
-                # First check date range (if specified)
-                if conditions.get('start_date') and thread.created_at < conditions['start_date']:
-                    return None
-                
-                if conditions.get('end_date') and thread.created_at > conditions['end_date']:
-                    return None
-                
-                # Then check author conditions (cheap operation)
-                if conditions['original_poster'] and thread.owner and thread.owner.id != conditions['original_poster'].id:
-                    return None
-                
-                if conditions['exclude_op'] and thread.owner and thread.owner.id == conditions['exclude_op'].id:
-                    return None
-                
-                # Check tags (cached function for efficiency)
-                thread_tag_names = tuple(tag.name for tag in thread.applied_tags)
-                search_tags = tuple(conditions.get('search_tags', []))
-                exclude_tags = tuple(conditions.get('exclude_tags', []))
-                
-                if not self._check_tags(thread_tag_names, search_tags, exclude_tags):
-                    return None
-                
-                # If we've passed all the above checks, now fetch the first message
-                first_message = None
-                retry_count = 0
-                max_retries = 2
-                
-                while retry_count <= max_retries:
-                    try:
-                        # Check cancellation again
-                        if cancel_event and cancel_event.is_set():
-                            return None
-                        
-                        # Fetch first message
-                        first_message = await thread.fetch_message(thread.id)
-                        break
-                    except discord.NotFound:
-                        return None
-                    except discord.HTTPException as e:
-                        if e.status == 429:  # Rate limited
-                            retry_after = e.retry_after or (1 * (retry_count + 1))
-                            self._logger.warning(f"Rate limited, waiting {retry_after}s")
-                            await asyncio.sleep(retry_after)
-                            retry_count += 1
-                        elif 500 <= e.status < 600:  # Server error, retry
-                            await asyncio.sleep(1 * (retry_count + 1))
-                            retry_count += 1
-                        else:
-                            self._logger.warning(f"Failed to get first message for thread {thread.id}: {e}")
-                            return None
-                    except Exception as e:
-                        self._logger.warning(f"Error fetching message for thread {thread.id}: {e}")
-                        return None
-                
-                if not first_message:
-                    return None
-                
-                # Check content keywords
-                if first_message.content:
-                    # Efficiently check keywords
-                    if not self._check_keywords(
-                        first_message.content,
-                        conditions.get('search_query', ''),
-                        conditions.get('exclude_keywords', [])
-                    ):
-                        return None
-                elif conditions.get('search_query'):
-                    # If there are search keywords but no content, it's a mismatch
-                    return None
-                
-                # Get thread statistics
+            owner = getattr(thread, 'owner', None)
+            if (op := conditions.get('original_poster')) and (not owner or owner.id != op.id): return None
+            if (ex_op := conditions.get('exclude_op')) and owner and owner.id == ex_op.id: return None
+            
+            if not self._check_tags(tuple(t.name for t in thread.applied_tags), 
+                                    tuple(conditions.get('search_tags', [])), 
+                                    tuple(conditions.get('exclude_tags', []))): return None
+            
+            # Fetch message (costly operation)
+            msg = None
+            for retry in range(3):
+                if cancel_event and cancel_event.is_set(): return None
                 try:
-                    # Check cancellation
-                    if cancel_event and cancel_event.is_set():
-                        return None
-                    
-                    stats = await self._thread_cache.get_thread_stats(thread)
-                    
-                    # Additional numeric filters
-                    if conditions.get('min_reactions') is not None and stats.get('reaction_count', 0) < conditions['min_reactions']:
-                        return None
-                    
-                    if conditions.get('min_replies') is not None and stats.get('reply_count', 0) < conditions['min_replies']:
-                        return None
-                    
-                except Exception as e:
-                    self._logger.error(f"Error getting stats for thread {thread.id}: {e}")
-                    stats = {'reaction_count': 0, 'reply_count': 0}
-                
-                # All checks passed, return the result
-                return {
-                    'thread': thread,
-                    'stats': stats,
-                    'first_message': first_message
-                }
-        
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:
-            thread_name = getattr(thread, 'name', 'unknown')
-            thread_id = getattr(thread, 'id', 'unknown')
-            self._logger.error(f"Error processing thread {thread_name} ({thread_id}): {e}", exc_info=True)
-            return None
-    
-    async def _process_thread_batch(self, threads: List[discord.Thread], search_conditions: Dict, 
-                                   cancel_event=None) -> List[Dict]:
-        """Process a batch of threads with smart concurrency control"""
-        if not threads:
-            return []
-        
-        # For small batches, process sequentially to avoid overhead
-        if len(threads) <= 3:
-            results = []
-            for thread in threads:
-                if cancel_event and cancel_event.is_set():
+                    msg = await thread.fetch_message(thread.id)
                     break
-                result = await self._process_single_thread(thread, search_conditions, cancel_event)
-                if result:
-                    results.append(result)
-            return results
-        
-        # For larger batches, process concurrently
-        tasks = []
-        for thread in threads:
-            if cancel_event and cancel_event.is_set():
-                break
+                except discord.NotFound: return None
+                except discord.HTTPException as e: 
+                    if e.status == 429 or 500 <= e.status < 600: await asyncio.sleep(1 * (retry + 1)); continue
+                    logger.warning(f"Msg fetch HTTP fail: {thread.id}, {e.status}"); return None
+                except Exception as e: logger.warning(f"Msg fetch error: {thread.id}, {e}"); return None
+            if not msg: return None # Failed after retries
             
-            task = asyncio.create_task(
-                self._process_single_thread(thread, search_conditions, cancel_event)
-            )
-            tasks.append(task)
-        
-        if not tasks:
-            return []
-        
-        # Gather results, ignoring exceptions
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        return [r for r in results if r is not None and not isinstance(r, Exception)]
+            # Check content keywords
+            if (query := conditions.get('search_query')) and not self._check_keywords(
+                msg.content, query, conditions.get('exclude_keywords', [])): return None
+            
+            # Check stats (potentially cached)
+            try:
+                if cancel_event and cancel_event.is_set(): return None
+                stats = await self._thread_cache.get_thread_stats(thread)
+                if (cond_val := conditions.get('min_reactions')) is not None and stats.get('reaction_count', 0) < cond_val: return None
+                if (cond_val := conditions.get('min_replies')) is not None and stats.get('reply_count', 0) < cond_val: return None
+            except Exception: stats = {'reaction_count': 0, 'reply_count': 0}
+            
+            # Passed all filters
+            return {'thread': thread, 'stats': stats, 'first_message': msg}
     
-    async def _search_archived_threads(self, forum_channel, search_conditions, progress_message, 
-                                      search_id, max_results=1000, total_active=0):
-        """Search archived threads with progress updates and cancellation support"""
-        filtered_results = []
-        processed_count = total_active
-        batch_size = 100  # Discord API limit
-        batch_count = 0
-        last_thread = None
-        error_count = 0
-        cancel_event = self._active_searches.get(search_id, {}).get("cancel_event")
+    async def _process_thread_batch(self, threads: List[discord.Thread], conditions: Dict, cancel_event=None) -> List[Dict]:
+        if not threads or (cancel_event and cancel_event.is_set()): return []
         
-        start_time = datetime.now()
-        last_update_time = start_time
+        # Sequential for small batches
+        if len(threads) <= 3:
+            results = [await self._process_single_thread(t, conditions, cancel_event) for t in threads if not (cancel_event and cancel_event.is_set())]
+            return [r for r in results if r]
+            
+        # Concurrent for larger batches
+        tasks = [asyncio.create_task(self._process_single_thread(t, conditions, cancel_event)) for t in threads if not (cancel_event and cancel_event.is_set())]
+        if not tasks: return []
+        
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        return [r for r in results if isinstance(r, dict)] # Filter out None and Exceptions
+    
+    async def _search_archived_threads(self, forum_channel, conditions, progress_message, search_id, max_results=1000, total_active=0):
+        results, processed, last_thread, errors, batch_count = [], total_active, None, 0, 0
+        cancel_event = self._active_searches.get(search_id, {}).get("cancel_event")
+        start_time, last_update = datetime.now(), datetime.now()
         
         while True:
-            # Check cancellation
-            if cancel_event and cancel_event.is_set():
-                await progress_message.edit(
-                    embed=self.embed_builder.create_warning_embed(
-                        "Search cancelled",
-                        f"✓ Processed: {processed_count} posts\n"
-                        f"📊 Matched results: {len(filtered_results)}\n"
-                        f"⏱️ Time taken: {(datetime.now() - start_time).total_seconds():.1f} s"
-                    )
-                )
-                return filtered_results
+            if cancel_event and cancel_event.is_set(): 
+                msg = f"✓ Processed: {processed} | 📊 Matched: {len(results)} | ⏱️ Time: {(datetime.now() - start_time).total_seconds():.1f}s"
+                await progress_message.edit(embed=self.embed_builder.create_warning_embed("Search cancelled", msg))
+                return results
             
-            # Stop if we reached the maximum results
-            if len(filtered_results) >= max_results:
-                await progress_message.edit(
-                    embed=self.embed_builder.create_info_embed(
-                        "Search exceeded limit",
-                        f"🔍 Reached maximum results ({max_results})\n"
-                        f"✓ Processed: {processed_count} posts\n"
-                        f"⏱️ Time taken: {(datetime.now() - start_time).total_seconds():.1f} s"
-                    )
-                )
-                return filtered_results
+            if len(results) >= max_results: 
+                msg = f"🔍 Max results ({max_results}) | ✓ Processed: {processed} | ⏱️ Time: {(datetime.now() - start_time).total_seconds():.1f}s"
+                await progress_message.edit(embed=self.embed_builder.create_info_embed("Search limit reached", msg))
+                return results
             
             try:
-                # Fetch a batch of archived threads
-                archived_threads = []
-                async for thread in forum_channel.archived_threads(limit=batch_size, before=last_thread):
-                    archived_threads.append(thread)
-                    last_thread = thread
-                
-                if not archived_threads:
-                    break  # No more threads to process
-                
+                batch = [t async for t in forum_channel.archived_threads(limit=100, before=last_thread)]
+                if not batch: break
+                last_thread = batch[-1]
                 batch_count += 1
                 
-                # Process this batch
-                batch_results = await self._process_thread_batch(
-                    archived_threads, search_conditions, cancel_event
-                )
+                batch_results = await self._process_thread_batch(batch, conditions, cancel_event)
+                results.extend(batch_results or [])
+                processed += len(batch)
                 
-                if batch_results:
-                    filtered_results.extend(batch_results)
-                
-                processed_count += len(archived_threads)
-                current_time = datetime.now()
-                elapsed_time = (current_time - start_time).total_seconds()
-                
-                # Update progress message (not too frequently to avoid rate limits)
-                if (current_time - last_update_time).total_seconds() >= 1.5:
-                    await progress_message.edit(
-                        embed=self.embed_builder.create_info_embed(
-                            "Search in progress",
-                            f"✓ Processed: {processed_count} posts\n"
-                            f"📊 Matched results: {len(filtered_results)}\n"
-                            f"⏱️ Time taken: {elapsed_time:.1f} s\n"
-                            f"📦 Processed {batch_count} batches of archived posts"
-                        )
-                    )
-                    last_update_time = current_time
+                now = datetime.now()
+                if (now - last_update).total_seconds() >= 1.5:
+                    elapsed = (now - start_time).total_seconds()
+                    msg = f"✓ Processed: {processed} | 📊 Matched: {len(results)} | ⏱️ Time: {elapsed:.1f}s | 📦 Batches: {batch_count}"
+                    await progress_message.edit(embed=self.embed_builder.create_info_embed("Searching Archives...", msg))
+                    last_update = now
             
-            except asyncio.CancelledError:
-                raise
             except Exception as e:
-                error_count += 1
-                self._logger.error(f"Error retrieving archived threads: {e}")
-                
-                # Update with error info
-                current_time = datetime.now()
-                if (current_time - last_update_time).total_seconds() >= 2:
-                    await progress_message.edit(
-                        embed=self.embed_builder.create_warning_embed(
-                            "Search in progress",
-                            f"❌ Error occurred in batch {batch_count}\n"
-                            f"✓ Processed: {processed_count} posts\n"
-                            f"📊 Current results: {len(filtered_results)}\n"
-                            f"⏳ Trying to continue search..."
-                        )
-                    )
-                    last_update_time = current_time
-                
-                if error_count >= 3:  # Stop after too many consecutive errors
-                    break
-                
-                # Add delay before retry
+                errors += 1
+                logger.error(f"Archived thread fetch error: {e}")
+                now = datetime.now()
+                if (now - last_update).total_seconds() >= 2:
+                    msg = f"❌ Error batch {batch_count} | ✓ Processed: {processed} | 📊 Matched: {len(results)}"
+                    await progress_message.edit(embed=self.embed_builder.create_warning_embed("Search continuing...", msg))
+                    last_update = now
+                if errors >= 3: break
                 await asyncio.sleep(2)
         
-        return filtered_results
+        return results
     
     def _parse_date(self, date_str: str) -> Optional[datetime]:
-        """Parse date string with multiple formats support"""
-        if not date_str:
-            return None
+        if not date_str: return None
+        formats = ["%Y-%m-%d", "%Y/%m/%d", "%m/%d/%Y", "%d.%m.%Y"]
+        for fmt in formats: 
+            try: return datetime.strptime(date_str, fmt)
+            except ValueError: continue
         
-        # Try various date formats
-        formats = [
-            "%Y-%m-%d",  # 2023-01-15
-            "%Y/%m/%d",  # 2023/01/15
-            "%m/%d/%Y",  # 01/15/2023
-            "%d.%m.%Y"   # 15.01.2023
-        ]
-        
-        # Try each format
-        for fmt in formats:
-            try:
-                return datetime.strptime(date_str, fmt)
-            except ValueError:
-                continue
-        
-        # Try relative date expressions like "7d" (7 days), "3m" (3 months), etc.
-        match = re.match(r'^(\d+)([dmyw])$', date_str.lower())
-        if match:
-            num, unit = match.groups()
-            num = int(num)
-            now = datetime.now()
-            
-            if unit == 'd':  # days
-                return now - timedelta(days=num)
-            elif unit == 'w':  # weeks
-                return now - timedelta(weeks=num)
-            elif unit == 'm':  # months (approximate)
-                return now - timedelta(days=num*30)
-            elif unit == 'y':  # years (approximate)
-                return now - timedelta(days=num*365)
-        
+        if match := re.match(r'^(\d+)([dmyw])$', date_str.lower()):
+            num, unit = int(match.group(1)), match.group(2)
+            delta_map = {'d': num, 'w': num * 7, 'm': num * 30, 'y': num * 365}
+            return datetime.now() - timedelta(days=delta_map.get(unit, 0))
         return None
-    
+
     def _store_search_history(self, user_id: int, search_info: Dict) -> None:
-        """Store search in user history"""
-        if user_id not in self._search_history:
-            self._search_history[user_id] = []
-        
-        # Add current search
-        self._search_history[user_id].insert(0, {
-            **search_info,
-            'timestamp': datetime.now()
-        })
-        
-        # Keep only recent searches
-        self._search_history[user_id] = self._search_history[user_id][:10]
-    
+        history = self._search_history.setdefault(user_id, [])
+        history.insert(0, {**search_info, 'timestamp': datetime.now()})
+        self._search_history[user_id] = history[:10] # Keep only last 10
+
     @app_commands.command(name="search_syntax", description="Show advanced search syntax instructions")
     @app_commands.guild_only()
     async def search_syntax(self, interaction: discord.Interaction):
-        """Show advanced search syntax help"""
+        """Show syntax guide for advanced search"""
         embed = discord.Embed(
-            title="Advanced Search Syntax Guide",
-            description="Forum search supports the following advanced syntax features:",
+            title="Advanced Search Syntax",
+            description="Forum search supports these syntax features:",
             color=EMBED_COLOR
         )
         
-        embed.add_field(
-            name="Basic Keywords",
-            value="Entering multiple keywords will match posts containing all keywords (AND logic)\n"
-                  "Example: `issue solution`",
-            inline=False
-        )
+        # Syntax patterns presented as a map of concepts to examples
+        patterns = {
+            "Basic Keywords": 
+                "Multiple keywords use AND logic\n`issue solution`",
+                
+            "OR Operator": 
+                "Match any keyword using `OR` or `|`\n`solution OR workaround`\n`topic | content | title`",
+                
+            "NOT Operator": 
+                "Exclude words with `NOT` or `-`\n`issue NOT resolved`\n`issue -resolved`",
+                
+            "Exact Phrases": 
+                "Use quotes for exact matching\n`\"complete phrase match\"`",
+                
+            "Combined": 
+                "Operators can be combined\n`(topic | content) NOT \"resolved\"`"
+        }
         
-        embed.add_field(
-            name="OR Operator",
-            value="Use `OR` or `|` to match any keyword\n"
-                  "Example: `solution OR workaround`\n"
-                  "Example: `topic | content | title`",
-            inline=False
-        )
-        
-        embed.add_field(
-            name="NOT Operator",
-            value="Use `NOT` or `-` to exclude posts containing a specific keyword\n"
-                  "Example: `issue NOT resolved`\n"
-                  "Example: `issue -resolved`",
-            inline=False
-        )
-        
-        embed.add_field(
-            name="Exact Phrase Matching",
-            value="Use quotes `\"...\"` for exact phrase matching\n"
-                  "Example: `\"complete phrase match\"`",
-            inline=False
-        )
-        
-        embed.add_field(
-            name="Combined Usage",
-            value="Multiple operators can be used in combination\n"
-                  "Example: `(topic | content) NOT \"resolved\"`",
-            inline=False
-        )
-        
+        # Add each pattern to the embed
+        for name, description in patterns.items():
+            embed.add_field(name=name, value=description, inline=False)
+            
         await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    async def _build_search_conditions(self, interaction, **kwargs) -> Optional[Dict]:
+        try:
+            start_dt = self._parse_date(sd := kwargs.get('start_date')) if sd else None
+            end_dt = self._parse_date(ed := kwargs.get('end_date')) if ed else None
+            if sd and not start_dt: raise ValueError(f"Invalid start date: {sd}")
+            if ed and not end_dt: raise ValueError(f"Invalid end date: {ed}")
+            if end_dt: end_dt += timedelta(days=1, microseconds=-1)
+
+            # Build and return conditions
+            search_tag_keys = [f'tag{i}' for i in range(1, 4)]
+            exclude_tag_keys = [f'exclude_tag{i}' for i in range(1, 3)]
+            return {
+                'search_tags': {kwargs.get(key).lower() for key in search_tag_keys if kwargs.get(key) is not None},
+                'exclude_tags': {kwargs.get(key).lower() for key in exclude_tag_keys if kwargs.get(key) is not None},
+                'search_query': kwargs.get('search_word'),
+                'exclude_keywords': self._preprocess_keywords(kwargs.get('exclude_word', "").split(",")),
+                'original_poster': kwargs.get('original_poster'), 'exclude_op': kwargs.get('exclude_op'),
+                'start_date': start_dt, 'end_date': end_dt,
+                'min_reactions': kwargs.get('min_reactions'), 'min_replies': kwargs.get('min_replies')
+            }
+        except ValueError as e:
+            await interaction.followup.send(embed=self.embed_builder.create_error_embed("Date Error", str(e)), ephemeral=True)
+            return None
+
+    async def _execute_search(self, forum_channel, conditions, progress_message, search_id, cancel_event) -> List[Dict]:
+        """Execute search on active and archived threads"""
+        results = []
+        processed = 0
+        search_start = datetime.now()
+
+        # Search active threads
+        active_threads = forum_channel.threads
+        if active_threads:
+            try:
+                active_results = await self._process_thread_batch(active_threads, conditions, cancel_event)
+                results.extend(active_results or [])
+                processed += len(active_threads)
+                elapsed = (datetime.now() - search_start).total_seconds()
+                await progress_message.edit(
+                    embed=self.embed_builder.create_info_embed("Searching...", 
+                                                              f"✓ Active: {processed} | 📊 Matches: {len(results)} | ⏱️ Time: {elapsed:.1f}s\n⏳ Searching archives...")
+                )
+            except Exception as e:
+                logger.error(f"Active search error: {e}")
+                await progress_message.edit(embed=self.embed_builder.create_warning_embed("Searching...", f"❌ Error in active posts | ⏳ Continuing..."))
+        
+        # Search archived threads
+        if not cancel_event.is_set():
+            try:
+                archived_results = await self._search_archived_threads(
+                    forum_channel, conditions, progress_message, search_id,
+                    max_results=MAX_MESSAGES_PER_SEARCH - len(results), total_active=processed
+                )
+                results.extend(archived_results or [])
+            except Exception as e:
+                logger.error(f"Archived search error: {e}")
+
+        return results
+
+    async def _generate_result_embed(self, item: Dict, total_results: int, page_number: int) -> discord.Embed:
+        thread, stats, msg = item['thread'], item['stats'], item['first_message']
+        embed = discord.Embed(title=truncate_text(thread.name, 256), url=thread.jump_url, color=EMBED_COLOR)
+        if owner := getattr(thread, 'owner', None): embed.set_author(name=owner.display_name, icon_url=owner.display_avatar.url)
+        if msg and msg.content: 
+            embed.description = f"**Summary:**\n{truncate_text(msg.content.strip(), 1000)}"
+            if thumb := self.attachment_processor.get_first_image(msg): embed.set_thumbnail(url=thumb)
+        
+        # Dynamic fields
+        fields = []
+        if tags := getattr(thread, 'applied_tags', None): fields.append(("Tags", ", ".join(t.name for t in tags), True))
+        reactions, replies = stats.get('reaction_count', 0), stats.get('reply_count', 0)
+        fields.append(("Stats", f"👍 {reactions} | 💬 {replies}", True))
+        last_active = getattr(thread.last_message, 'created_at', thread.created_at)
+        fields.append(("Time", f"Created: {discord.utils.format_dt(thread.created_at, 'R')}\nActive: {discord.utils.format_dt(last_active, 'R')}", True))
+        for name, value, inline in fields: embed.add_field(name=name, value=value, inline=inline)
+        
+        # Footer
+        start, end = page_number * MESSAGES_PER_PAGE + 1, min((page_number + 1) * MESSAGES_PER_PAGE, total_results)
+        embed.set_footer(text=f"Result {start}-{end} of {total_results}")
+        return embed
+
+    async def _present_results(self, interaction, results: List[Dict], order: str, conditions: Dict, start_time: datetime):
+        total_time = (datetime.now() - start_time).total_seconds()
+        if not results:
+            await interaction.followup.send(embed=self.embed_builder.create_warning_embed("No Results", "No posts matched criteria"), ephemeral=True)
+            return
+
+        # Store simplified history
+        hist_cond = {k: v for k, v in conditions.items() if v and k not in ['original_poster', 'exclude_op']} 
+        if op := conditions.get('original_poster'): hist_cond['op_id'] = op.id
+        if ex := conditions.get('exclude_op'): hist_cond['ex_op_id'] = ex.id
+        self._store_search_history(interaction.user.id, {
+            'forum': interaction.channel.name, 'conditions': hist_cond, 
+            'results_count': len(results), 'duration': total_time
+        })
+
+        # Sort & Paginate
+        sort_key, reverse = self._sort_functions.get(order, self._sort_functions["Post Time (Newest First)"])
+        results.sort(key=sort_key, reverse=reverse)
+
+        async def embed_gen(items, page):
+            tasks = [self._generate_result_embed(item, len(results), page) for item in items]
+            return await asyncio.gather(*tasks)
+
+        paginator = MultiEmbedPaginationView(items=results, items_per_page=MESSAGES_PER_PAGE, generate_embeds=embed_gen)
+        if initial_items := paginator.get_page_items(0):
+            await paginator.start(interaction, await embed_gen(initial_items, 0))
+        else:
+            await interaction.followup.send(embed=self.embed_builder.create_error_embed("Error", "Could not generate results page"), ephemeral=True)
 
     @app_commands.command(name="forum_search", description="Search forum posts")
     @app_commands.guild_only()
     @app_commands.describe(
-        forum_name="Select the forum channel to search",
-        order="Result sorting method",
-        original_poster="Specified original poster (select member)",
-        tag1="Select the first tag to search for",
-        tag2="Select the second tag to search for",
-        tag3="Select the third tag to search for",
-        search_word="Search keywords (supports advanced syntax: OR, AND, NOT, \"exact phrase\")",
-        exclude_word="Exclude keywords (comma-separated)",
-        exclude_op="Excluded author (select member)",
-        exclude_tag1="Select the first tag to exclude",
-        exclude_tag2="Select the second tag to exclude",
-        start_date="Start date (YYYY-MM-DD or 7d for the last 7 days)",
-        end_date="End date (YYYY-MM-DD)",
-        min_reactions="Minimum reactions",
-        min_replies="Minimum replies"
+        forum_name="Forum", order="Sort", original_poster="OP", tag1="Tag1", tag2="Tag2", tag3="Tag3", 
+        search_word="Keywords", exclude_word="ExcludeKW", exclude_op="ExcludeOP", exclude_tag1="ExTag1", 
+        exclude_tag2="ExTag2", start_date="Start", end_date="End", min_reactions="MinReact", min_replies="MinReply"
     )
-    @app_commands.choices(order=[
-        app_commands.Choice(name=option, value=option)
-        for option in SEARCH_ORDER_OPTIONS
-    ])
-    async def forum_search(
-        self,
-        interaction: discord.Interaction,
-        forum_name: str,
-        order: str = "Reactions (High to Low)",
-        original_poster: Optional[discord.User] = None,
-        tag1: Optional[str] = None,
-        tag2: Optional[str] = None,
-        tag3: Optional[str] = None,
-        search_word: Optional[str] = None,
-        exclude_word: Optional[str] = None,
-        exclude_op: Optional[discord.User] = None,
-        exclude_tag1: Optional[str] = None,
-        exclude_tag2: Optional[str] = None,
-        start_date: Optional[str] = None,
-        end_date: Optional[str] = None,
-        min_reactions: Optional[int] = None,
-        min_replies: Optional[int] = None
-    ):
-        """Command implementation for searching forum posts (optimized version)"""
+    @app_commands.choices(order=[app_commands.Choice(name=o, value=o) for o in SEARCH_ORDER_OPTIONS])
+    async def forum_search(self, interaction: discord.Interaction, forum_name: str, order: str = "Reactions (High to Low)", **kwargs):
+        """Main handler: orchestrates validation, search execution, and result presentation."""
+        search_id = str(uuid.uuid4())
+        cancel_event = asyncio.Event()
+        self._active_searches[search_id] = {"cancel_event": cancel_event, "start_time": datetime.now()}
+        start_time = datetime.now()
+        
         try:
-            self._logger.info(f"Search command invoked - User: {interaction.user}")
-            
-            # Permission check
-            if not interaction.guild:
-                await interaction.response.send_message(
-                    embed=self.embed_builder.create_error_embed("Command Error", "This command can only be used in a server"),
-                    ephemeral=True
-                )
-                return
-
-            permissions = interaction.channel.permissions_for(interaction.guild.me)
-            if not (permissions.send_messages and permissions.embed_links):
-                await interaction.response.send_message(
-                    embed=self.embed_builder.create_error_embed("Permission Error", "Bot lacks necessary permissions: Send Messages, Embed Links"),
-                    ephemeral=True
-                )
-                return
-
-            # Create search ID and setup cancellation tracking
-            search_id = str(uuid.uuid4())
-            cancel_event = asyncio.Event()
-            self._active_searches[search_id] = {
-                "cancel_event": cancel_event,
-                "start_time": datetime.now()
-            }
-            
-            # Defer response to give more processing time
+            # Initial Setup & Validation
+            if not interaction.guild: raise commands.NoPrivateMessage()
+            perms = interaction.channel.permissions_for(interaction.guild.me)
+            if not (perms.send_messages and perms.embed_links): raise commands.BotMissingPermissions(["Send Messages", "Embed Links"])
             await interaction.response.defer(ephemeral=True)
             
-            # Get forum channel
-            forum_channel = interaction.guild.get_channel(int(forum_name))
-            if not isinstance(forum_channel, discord.ForumChannel):
-                await interaction.followup.send(
-                    embed=self.embed_builder.create_error_embed("Search Error", "Specified forum channel not found"),
-                    ephemeral=True
-                )
-                return
+            try: forum_channel = interaction.guild.get_channel(int(forum_name))
+            except ValueError: raise commands.BadArgument("Invalid forum channel ID format.")
+            if not isinstance(forum_channel, discord.ForumChannel): raise commands.BadArgument("Channel is not a forum.")
 
-            # Parse date ranges if provided
-            start_datetime = None
-            end_datetime = None
-            date_error = None
-            
-            if start_date:
-                start_datetime = self._parse_date(start_date)
-                if not start_datetime:
-                    date_error = f"Could not parse start date: {start_date}"
-            
-            if end_date:
-                end_datetime = self._parse_date(end_date)
-                if not end_datetime:
-                    date_error = f"Could not parse end date: {end_date}"
-                else:
-                    # Include the entire end date
-                    end_datetime = end_datetime + timedelta(days=1, microseconds=-1)
-            
-            if date_error:
-                await interaction.followup.send(
-                    embed=self.embed_builder.create_error_embed("Date Format Error", date_error + "\nPlease use YYYY-MM-DD format or relative dates (e.g., 7d for the last 7 days)"),
-                    ephemeral=True
-                )
-                return
+            conditions = await self._build_search_conditions(interaction, **kwargs)
+            if conditions is None: return # Error handled in helper
 
-            # Preprocess search conditions
-            search_conditions = {
-                'search_tags': set(tag.lower() for tag in [tag1, tag2, tag3] if tag),
-                'exclude_tags': set(tag.lower() for tag in [exclude_tag1, exclude_tag2] if tag),
-                'search_query': search_word,
-                'exclude_keywords': self._preprocess_keywords(exclude_word.split(",") if exclude_word else []),
-                'original_poster': original_poster,
-                'exclude_op': exclude_op,
-                'start_date': start_datetime,
-                'end_date': end_datetime,
-                'min_reactions': min_reactions,
-                'min_replies': min_replies
+            # Criteria Summary & Progress Message Setup
+            criteria_map = {
+                'search_tags': ("🏷️ Tags", ", ".join), 'exclude_tags': ("🚫 ExTags", ", ".join),
+                'search_query': ("🔍 KW", str), 'exclude_keywords': ("❌ ExKW", ", ".join),
+                'original_poster': ("👤 By", lambda u: u.display_name), 'exclude_op': ("🚷 NotBy", lambda u: u.display_name),
+                'start_date': ("📅 From", lambda d: d.strftime('%Y-%m-%d')), 'end_date': ("📅 To", lambda d: d.strftime('%Y-%m-%d')),
+                'min_reactions': ("👍 Min 👍", str), 'min_replies': ("💬 Min 💬", str)
             }
-
-            # Generate search condition summary
-            condition_summary = []
-            if search_conditions['search_tags']:
-                condition_summary.append(f"🏷️ Included tags: {', '.join(search_conditions['search_tags'])}")
-            if search_conditions['exclude_tags']:
-                condition_summary.append(f"🚫 Excluded tags: {', '.join(search_conditions['exclude_tags'])}")
-            if search_conditions['search_query']:
-                condition_summary.append(f"🔍 Keywords: {search_conditions['search_query']}")
-            if search_conditions['exclude_keywords']:
-                condition_summary.append(f"❌ Excluded words: {', '.join(search_conditions['exclude_keywords'])}")
-            if original_poster:
-                condition_summary.append(f"👤 Original poster: {original_poster.display_name}")
-            if exclude_op:
-                condition_summary.append(f"🚷 Excluded poster: {exclude_op.display_name}")
-            if start_datetime:
-                condition_summary.append(f"📅 Start date: {start_datetime.strftime('%Y-%m-%d')}")
-            if end_datetime:
-                condition_summary.append(f"📅 End date: {end_datetime.strftime('%Y-%m-%d')}")
-            if min_reactions is not None:
-                condition_summary.append(f"👍 Minimum reactions: {min_reactions}")
-            if min_replies is not None:
-                condition_summary.append(f"💬 Minimum replies: {min_replies}")
+            criteria_text = "\n".join([f"{label}: {fmt(conditions[k])}" for k, (label, fmt) in criteria_map.items() if conditions.get(k)]) or "No specific criteria"
             
-            conditions_text = "\n".join(condition_summary) if condition_summary else "No specific search criteria"
-
-            # Create cancel button for progress message
-            cancel_button = discord.ui.Button(label="Cancel Search", style=discord.ButtonStyle.danger)
-            
-            async def cancel_callback(btn_interaction):
-                if search_id in self._active_searches:
-                    self._active_searches[search_id]["cancel_event"].set()
-                    await btn_interaction.response.send_message("Search cancelled", ephemeral=True)
-            
-            cancel_button.callback = cancel_callback
             cancel_view = discord.ui.View(timeout=300)
+            cancel_button = discord.ui.Button(label="Cancel", style=discord.ButtonStyle.danger, custom_id=f"cancel_{search_id}")
+            async def cancel_callback(intr: discord.Interaction): 
+                if sid := intr.data['custom_id'].split('_')[-1]: self._active_searches.get(sid, {}).get("cancel_event").set()
+                await intr.response.edit_message(content="Search cancelled.", view=None, embed=None)
+            cancel_button.callback = cancel_callback
             cancel_view.add_item(cancel_button)
 
-            # Send initial progress message
             progress_message = await interaction.followup.send(
-                embed=self.embed_builder.create_info_embed(
-                    "Search in progress", 
-                    f"📋 Search criteria:\n{conditions_text}\n\n💫 Searching active posts..."
-                ),
-                view=cancel_view,
-                ephemeral=True
+                embed=self.embed_builder.create_info_embed("Searching...", f"📋 Criteria:\n{criteria_text}\n\n⏳ Processing..."),
+                view=cancel_view, ephemeral=True
             )
 
-            filtered_results = []
-            processed_count = 0
-            start_time = datetime.now()
+            # Execute & Present
+            results = await self._execute_search(forum_channel, conditions, progress_message, search_id, cancel_event)
+            # Cleanup progress message view
+            try: 
+                await progress_message.edit(view=None) 
+            except Exception: 
+                pass # Ignore cleanup errors
             
-            # Process active threads
-            active_threads = forum_channel.threads
-            active_count = len(active_threads)
-            
-            if active_count > 0:
-                try:
-                    active_results = await self._process_thread_batch(active_threads, search_conditions, cancel_event)
-                    if active_results:
-                        filtered_results.extend(active_results)
-                    processed_count += active_count
-                    
-                    # Update progress
-                    elapsed_time = (datetime.now() - start_time).total_seconds()
-                    await progress_message.edit(
-                        embed=self.embed_builder.create_info_embed(
-                            "Search in progress",
-                            f"✓ Processed active posts: {processed_count}\n"
-                            f"📊 Matching results: {len(filtered_results)}\n"
-                            f"⏱️ Time taken: {elapsed_time:.1f} s\n"
-                            f"⏳ Searching archived posts..."
-                        )
-                    )
-                except Exception as e:
-                    self._logger.error(f"Error processing active threads: {e}")
-                    await progress_message.edit(
-                        embed=self.embed_builder.create_warning_embed(
-                            "Search in progress",
-                            f"❌ Error occurred while processing active posts\n"
-                            f"📊 Current results: {len(filtered_results)}\n"
-                            f"⏳ Continuing to search archived posts..."
-                        )
-                    )
+            if not cancel_event.is_set(): await self._present_results(interaction, results, order, conditions, start_time)
 
-            # Process archived threads
-            if not cancel_event.is_set():
-                try:
-                    archived_results = await self._search_archived_threads(
-                        forum_channel, 
-                        search_conditions, 
-                        progress_message, 
-                        search_id,
-                        max_results=MAX_MESSAGES_PER_SEARCH - len(filtered_results),
-                        total_active=processed_count
-                    )
-                    
-                    if archived_results:
-                        filtered_results.extend(archived_results)
-                except Exception as e:
-                    self._logger.error(f"Error searching archived threads: {e}")
-            
-            # Calculate total search time
-            total_time = (datetime.now() - start_time).total_seconds()
-            
-            # Check if search was cancelled
-            if cancel_event.is_set():
-                if search_id in self._active_searches:
-                    del self._active_searches[search_id]
-                return
-            
-            # Update final progress status
-            await progress_message.edit(
-                embed=self.embed_builder.create_info_embed(
-                    "Search complete",
-                    f"📋 Search criteria:\n{conditions_text}\n\n"
-                    f"✅ Processed {processed_count} posts in total\n"
-                    f"📊 Found {len(filtered_results)} matching results\n"
-                    f"⏱️ Total time taken: {total_time:.1f} s\n"
-                    f"💫 Generating result pages..."
-                ),
-                view=None
-            )
-            
-            # Store search in history
-            self._store_search_history(interaction.user.id, {
-                'forum': forum_channel.name,
-                'conditions': search_conditions,
-                'results_count': len(filtered_results),
-                'processed_count': processed_count,
-                'duration': total_time
-            })
-
-            # Sort results based on selected order
-            if order in self._sort_functions:
-                sort_key, reverse = self._sort_functions[order]
-                filtered_results.sort(key=sort_key, reverse=reverse)
-            else:
-                # Default sort by newest first
-                sort_key, reverse = self._sort_functions["Post Time (Newest First)"]
-                filtered_results.sort(key=sort_key, reverse=reverse)
-
-            # Clean up active search
-            if search_id in self._active_searches:
-                del self._active_searches[search_id]
-
-            if not filtered_results:
-                await interaction.followup.send(
-                    embed=self.embed_builder.create_warning_embed("No Search Results", "No posts found matching the criteria"),
-                    ephemeral=True
-                )
-                return
-
-            # Create paginated display
-            async def generate_embeds(page_items, page_number):
-                """Generate embeds for result pages"""
-                embeds = []
-                for item in page_items:
-                    thread = item['thread']
-                    stats = item['stats']
-                    first_message = item['first_message']
-
-                    embed = discord.Embed(
-                        title=truncate_text(thread.name, 256),
-                        url=thread.jump_url,
-                        color=EMBED_COLOR
-                    )
-
-                    if thread.owner:
-                        embed.set_author(
-                            name=thread.owner.display_name,
-                            icon_url=thread.owner.display_avatar.url
-                        )
-
-                    if first_message and first_message.content:
-                        # Highlight search keywords in content
-                        summary = truncate_text(first_message.content.strip(), 1000)
-                        embed.description = f"**Post Summary:**\n{summary}"
-
-                        # Add thumbnail from first image in message if available
-                        thumbnail_url = self.attachment_processor.get_first_image(first_message)
-                        if thumbnail_url:
-                            embed.set_thumbnail(url=thumbnail_url)
-
-                    if thread.applied_tags:
-                        tag_names = [tag.name for tag in thread.applied_tags]
-                        embed.add_field(name="Tags", value=", ".join(tag_names), inline=True)
-
-                    # Add statistics
-                    reaction_count = stats.get('reaction_count', 0) or 0
-                    reply_count = stats.get('reply_count', 0) or 0
-                    embed.add_field(
-                        name="Statistics", 
-                        value=f"👍 {reaction_count} | 💬 {reply_count}", 
-                        inline=True
-                    )
-
-                    # Add timestamps
-                    embed.add_field(
-                        name="Time",
-                        value=f"Created: {discord.utils.format_dt(thread.created_at, 'R')}\n"
-                              f"Last Active: {discord.utils.format_dt(thread.last_message.created_at if thread.last_message else thread.created_at, 'R')}",
-                        inline=True
-                    )
-
-                    # Add pagination info in footer
-                    total_items = len(filtered_results)
-                    start_idx = page_number * MESSAGES_PER_PAGE + 1
-                    end_idx = min((page_number + 1) * MESSAGES_PER_PAGE, total_items)
-                    embed.set_footer(text=f"Result {start_idx}-{end_idx} of {total_items}")
-
-                    embeds.append(embed)
-                return embeds
-
-            # Use existing pagination view
-            paginator = MultiEmbedPaginationView(
-                items=filtered_results,
-                items_per_page=MESSAGES_PER_PAGE,
-                generate_embeds=generate_embeds
-            )
-
-            # Generate and send initial page embeds
-            initial_page_items = paginator.get_page_items(0)
-            if initial_page_items:
-                initial_embeds = await generate_embeds(initial_page_items, 0)
-                if initial_embeds:
-                    await paginator.start(interaction, initial_embeds)
-                else:
-                    await interaction.followup.send(
-                        embed=self.embed_builder.create_error_embed("Error", "Could not generate search result page"),
-                        ephemeral=True
-                    )
-            else:
-                await interaction.followup.send(
-                    embed=self.embed_builder.create_warning_embed("No Search Results", "No posts found matching the criteria"),
-                    ephemeral=True
-                )
-
+        # Specific Error Handling
+        except (commands.NoPrivateMessage, commands.BotMissingPermissions, commands.BadArgument) as e:
+            await interaction.followup.send(embed=self.embed_builder.create_error_embed("Setup Error", str(e)), ephemeral=True)
+        except discord.NotFound:
+            await interaction.followup.send(embed=self.embed_builder.create_error_embed("Error", "Resource not found."), ephemeral=True)
+        except discord.Forbidden:
+            await interaction.followup.send(embed=self.embed_builder.create_error_embed("Error", "Missing permissions."), ephemeral=True)
         except Exception as e:
-            self._logger.error(f"Search Error: {str(e)}", exc_info=True)
-            await interaction.followup.send(
-                embed=self.embed_builder.create_error_embed("Search Error", f"An error occurred during the search: {str(e)}\nPlease try again later"),
-                ephemeral=True
-            )
+            logger.error(f"Search command error: {e}", exc_info=True)
+            await interaction.followup.send(embed=self.embed_builder.create_error_embed("Error", "An unexpected error occurred."), ephemeral=True)
+        
+        finally: self._active_searches.pop(search_id, None)
 
     @forum_search.autocomplete('forum_name')
-    async def forum_name_autocomplete(
-        self,
-        interaction: discord.Interaction,
-        current: str,
-    ) -> List[app_commands.Choice[str]]:
-        """Enhanced forum name autocomplete with history prioritization"""
-        try:
-            if not interaction.guild:
-                return []
-            
-            choices = []
-            user_id = interaction.user.id
-            
-            # Get forums from user's search history first
-            recent_forums = set()
-            if user_id in self._search_history:
-                for search in self._search_history[user_id]:
-                    if 'forum' in search and search['forum']:
-                        recent_forums.add(search['forum'])
-            
-            # Get all forum channels
-            forum_channels = []
-            for channel in interaction.guild.channels:
-                if isinstance(channel, discord.ForumChannel):
-                    # Skip if doesn't match current input
-                    if current and current.lower() not in channel.name.lower():
-                        continue
-                    
-                    if channel.name and channel.id:
-                        # Prioritize recently used forums
-                        is_recent = channel.name in recent_forums
-                        forum_channels.append((channel, is_recent))
-            
-            # Sort by recency (recent first) then alphabetically
-            forum_channels.sort(key=lambda x: (not x[1], x[0].name.lower()))
-            
-            # Create choices
-            choices = [
-                app_commands.Choice(
-                    name=f"#{channel.name}" + (" (recent)" if is_recent else ""),
-                    value=str(channel.id)
-                )
-                for channel, is_recent in forum_channels[:25]
-            ]
-            
-            return choices
-            
-        except Exception as e:
-            self._logger.error(f"Forum name autocomplete error: {str(e)}", exc_info=True)
+    async def forum_name_autocomplete(self, interaction: discord.Interaction, current: str) -> List[app_commands.Choice[str]]:
+        """Forum name autocomplete with history prioritization"""
+        if not interaction.guild:
             return []
+        
+        # Get recent forums from user's search history
+        user_id = interaction.user.id
+        recent_forums = {
+            search['forum'] for search in self._search_history.get(user_id, [])
+            if 'forum' in search and search['forum']
+        }
+        
+        # Get matching forum channels
+        forum_channels = [
+            (channel, channel.name in recent_forums)  # (channel, is_recent)
+            for channel in interaction.guild.channels
+            if isinstance(channel, discord.ForumChannel) and 
+               (not current or current.lower() in channel.name.lower())
+        ]
+        
+        # Sort by recency first, then alphabetically
+        forum_channels.sort(key=lambda x: (not x[1], x[0].name.lower()))
+        
+        # Create choices (max 25)
+        return [
+            app_commands.Choice(
+                name=f"#{channel.name}" + (" (recent)" if is_recent else ""),
+                value=str(channel.id)
+            )
+            for channel, is_recent in forum_channels[:25]
+        ]
 
     @forum_search.autocomplete('tag1')
     @forum_search.autocomplete('tag2')
     @forum_search.autocomplete('tag3')
     @forum_search.autocomplete('exclude_tag1')
     @forum_search.autocomplete('exclude_tag2')
-    async def tag_autocomplete(
-        self,
-        interaction: discord.Interaction,
-        current: str,
-    ) -> List[app_commands.Choice[str]]:
-        """Enhanced tag autocomplete with history prioritization"""
-        try:
-            if not interaction.guild:
-                return []
-
-            # Get selected forum ID
-            forum_name = None
-            for option in interaction.data.get("options", []):
-                if option["name"] == "forum_name":
-                    forum_name = option["value"]
-                    break
-
-            if not forum_name:
-                return []
-
-            # Get forum channel
-            forum_channel = interaction.guild.get_channel(int(forum_name))
-            if not isinstance(forum_channel, discord.ForumChannel):
-                return []
-
-            # Get all available tags
-            available_tags = forum_channel.available_tags
-            
-            # Get currently selected tags in the command
-            selected_tags = set()
-            for option in interaction.data.get("options", []):
-                if option["name"].startswith("tag") and option.get("value"):
-                    selected_tags.add(option["value"])
-                if option["name"].startswith("exclude_tag") and option.get("value"):
-                    selected_tags.add(option["value"])
-
-            # Get user's frequently used tags from history
-            user_id = interaction.user.id
-            tag_frequency = {}
-            if user_id in self._search_history:
-                for search in self._search_history[user_id]:
-                    if 'conditions' in search and 'search_tags' in search['conditions']:
-                        for tag in search['conditions']['search_tags']:
-                            tag_frequency[tag] = tag_frequency.get(tag, 0) + 1
-
-            # Filter and prioritize tags
-            filtered_tags = []
-            for tag in available_tags:
-                # Skip already selected tags
-                if tag.name in selected_tags:
-                    continue
-                
-                # Skip tags that don't match current input
-                if current and current.lower() not in tag.name.lower():
-                    continue
-                
-                # Skip moderated tags for non-moderators
-                if tag.moderated and not interaction.user.guild_permissions.manage_threads:
-                    continue
-                
-                # Calculate priority (frequency of use)
-                frequency = tag_frequency.get(tag.name.lower(), 0)
-                filtered_tags.append((tag, frequency))
-
-            # Sort tags by frequency (most used first) then alphabetically
-            filtered_tags.sort(key=lambda x: (-x[1], x[0].name.lower()))
-            
-            # Create choices
-            choices = [
-                app_commands.Choice(
-                    name=tag.name + (" 🔄" if freq > 0 else ""),  # Indicator for frequently used tags
-                    value=tag.name
-                )
-                for tag, freq in filtered_tags[:25]
-            ]
-            
-            return choices
-            
-        except Exception as e:
-            self._logger.error(f"Tag autocomplete error: {str(e)}", exc_info=True)
+    async def tag_autocomplete(self, interaction: discord.Interaction, current: str) -> List[app_commands.Choice[str]]:
+        """Tag autocomplete with history prioritization"""
+        if not interaction.guild:
             return []
+
+        # Find selected forum_name in options
+        forum_id = next((
+            option["value"] for option in interaction.data.get("options", [])
+            if option["name"] == "forum_name"
+        ), None)
+        
+        if not forum_id:
+            return []
+
+        # Get forum channel
+        forum_channel = interaction.guild.get_channel(int(forum_id))
+        if not isinstance(forum_channel, discord.ForumChannel):
+            return []
+
+        # Get already selected tags
+        selected_tags = {
+            option.get("value") for option in interaction.data.get("options", [])
+            if option["name"].startswith(("tag", "exclude_tag")) and option.get("value")
+        }
+
+        # Count tag usage frequency from history
+        user_id = interaction.user.id
+        tag_frequency = {}
+        for search in self._search_history.get(user_id, []):
+            if 'conditions' in search and 'search_tags' in search['conditions']:
+                for tag in search['conditions']['search_tags']:
+                    tag_frequency[tag] = tag_frequency.get(tag, 0) + 1
+
+        # Filter and prioritize available tags
+        filtered_tags = [
+            (tag, tag_frequency.get(tag.name.lower(), 0))
+            for tag in forum_channel.available_tags
+            if tag.name not in selected_tags and
+               (not current or current.lower() in tag.name.lower()) and
+               (not tag.moderated or interaction.user.guild_permissions.manage_threads)
+        ]
+
+        # Sort by frequency (most used first) then alphabetically
+        filtered_tags.sort(key=lambda x: (-x[1], x[0].name.lower()))
+        
+        # Return choices (max 25)
+        return [
+            app_commands.Choice(
+                name=tag.name + (" 🔄" if freq > 0 else ""),
+                value=tag.name
+            )
+            for tag, freq in filtered_tags[:25]
+        ]
 
     @app_commands.command(name="search_history", description="View your search history")
     @app_commands.guild_only()
     async def search_history(self, interaction: discord.Interaction):
         """Display user's search history"""
-        try:
-            user_id = interaction.user.id
-            
-            if user_id not in self._search_history or not self._search_history[user_id]:
-                await interaction.response.send_message(
-                    embed=self.embed_builder.create_info_embed("Search History", "You haven't performed any searches yet"),
-                    ephemeral=True
-                )
-                return
-            
-            # Create embed with search history
-            embed = discord.Embed(
-                title="Your Search History",
-                description="Here are your recent search records",
-                color=EMBED_COLOR
-            )
-            
-            for i, search in enumerate(self._search_history[user_id][:5], 1):
-                forum_name = search.get('forum', 'Unknown Forum')
-                timestamp = search.get('timestamp', datetime.now())
-                results_count = search.get('results_count', 0)
-                duration = search.get('duration', 0)
-                
-                # Build conditions summary
-                conditions = search.get('conditions', {})
-                condition_parts = []
-                
-                if conditions.get('search_tags'):
-                    condition_parts.append(f"Tags: {', '.join(conditions['search_tags'][:2])}" + 
-                                         ("..." if len(conditions['search_tags']) > 2 else ""))
-                
-                if conditions.get('search_query'):
-                    condition_parts.append(f"Keywords: {conditions['search_query']}")
-                
-                if conditions.get('original_poster'):
-                    condition_parts.append(f"Original Poster: {conditions['original_poster'].display_name}")
-                
-                conditions_text = " | ".join(condition_parts) if condition_parts else "No specific criteria"
-                
-                embed.add_field(
-                    name=f"{i}. {forum_name} ({discord.utils.format_dt(timestamp, 'R')})",
-                    value=f"Criteria: {conditions_text}\nResults: {results_count} items | Time taken: {duration:.1f} s",
-                    inline=False
-                )
-            
-            await interaction.response.send_message(embed=embed, ephemeral=True)
-            
-        except Exception as e:
-            self._logger.error(f"Search history command error: {str(e)}", exc_info=True)
+        user_id = interaction.user.id
+        history = self._search_history.get(user_id, [])
+        
+        if not history:
             await interaction.response.send_message(
-                embed=self.embed_builder.create_error_embed("Error", "Failed to retrieve search history"),
+                embed=self.embed_builder.create_info_embed("Search History", "No searches performed yet"),
                 ephemeral=True
             )
+            return
+        
+        # Create embed with search history
+        embed = discord.Embed(
+            title="Your Search History",
+            description="Recent searches",
+            color=EMBED_COLOR
+        )
+        
+        # Add each search (limit to 5)
+        for i, search in enumerate(history[:5], 1):
+            forum = search.get('forum', 'Unknown Forum')
+            timestamp = search.get('timestamp', datetime.now())
+            results_count = search.get('results_count', 0)
+            duration = search.get('duration', 0)
+            
+            # Build conditions summary
+            conditions = search.get('conditions', {})
+            summary_parts = []
+            
+            if conditions.get('search_tags'):
+                tags = list(conditions['search_tags'])[:2]
+                summary_parts.append(f"Tags: {', '.join(tags)}" + ("..." if len(conditions['search_tags']) > 2 else ""))
+            
+            if conditions.get('search_query'):
+                summary_parts.append(f"Keywords: {conditions['search_query']}")
+            
+            if conditions.get('original_poster'):
+                summary_parts.append(f"By: {conditions['original_poster'].display_name}")
+            
+            summary = " | ".join(summary_parts) or "No specific criteria"
+            
+            embed.add_field(
+                name=f"{i}. {forum} ({discord.utils.format_dt(timestamp, 'R')})",
+                value=f"{summary}\nResults: {results_count} | Time: {duration:.1f}s",
+                inline=False
+            )
+        
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Search(bot))

@@ -1,57 +1,37 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-import psutil
-import time
-import platform
-import asyncio
-import os
-import sys
+import psutil, time, platform, asyncio, os, sys, gc, logging
 from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional
-import logging
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
-import gc
+
+logger = logging.getLogger('discord_bot.stats')
 
 class Stats(commands.Cog):
-    """Performance statistics and monitoring system
-    
-    Optimized performance monitoring system for large servers, providing real-time statistics and resource usage information
-    """
+    """Performance statistics and monitoring"""
     
     def __init__(self, bot):
         self.bot = bot
         self._start_time = time.time()
-        self._command_usage = {}
-        self._guild_usage = {}
-        self._search_stats = {
-            'total_searches': 0,
+        self._command_usage = defaultdict(int) # Use defaultdict for counters
+        self._guild_usage = defaultdict(lambda: {'commands': 0, 'searches': 0, 'avg_response': 0.0})
+        self._search_stats = defaultdict(float, { # Use float defaultdict for averages/totals
+            'total_searches': 0, # Keep int for counts
             'successful_searches': 0,
             'failed_searches': 0,
-            'avg_search_time': 0,
-            'total_search_time': 0,
-            'last_hour_searches': 0,
             'peak_concurrent': 0
-        }
-        self._logger = logging.getLogger('discord_bot.stats')
-        
-        # Cache statistics
-        self._cache_stats = {
-            'thread_cache_size': 0,
-            'memory_hit_rate': 0,
-            'redis_hit_rate': 0
-        }
-        
-        # Performance metrics
+        })
+        self._cache_stats = defaultdict(float)
         self._performance_metrics = {
-            'avg_response_time': 0,
+            'avg_response_time': 0.0,
             'total_responses': 0,
-            'response_times': []  # Keep the last 100 response times to calculate the average
+            'response_times': [] # Cap maintained later
         }
         
         # Start background task
         self.bg_task = self.bot.loop.create_task(self._background_stats_update())
-        self._logger.info("Performance monitoring system initialized")
     
     @app_commands.command(
         name="bot_stats", 
@@ -61,139 +41,73 @@ class Stats(commands.Cog):
         """Show bot performance statistics"""
         await interaction.response.defer()
         
-        # System information
+        # Gather System & Bot Info
         process = psutil.Process()
         with process.oneshot():
-            memory_usage = process.memory_info().rss / (1024 * 1024)  # MB
+            mem_info = process.memory_info()
             cpu_percent = process.cpu_percent() / psutil.cpu_count()
-            uptime = timedelta(seconds=int(time.time() - self._start_time))
-            thread_count = process.num_threads()
+            threads = process.num_threads()
             open_files = len(process.open_files())
-            
-        # Statistics
+        memory_usage_mb = mem_info.rss / (1024 * 1024)
+        uptime = timedelta(seconds=int(time.time() - self._start_time))
         guild_count = len(self.bot.guilds)
-        user_count = sum(g.member_count for g in self.bot.guilds if g.member_count is not None) # Ensure member_count is available
-        
-        # Create main embed
-        embed = discord.Embed(
-            title="Bot Performance Statistics",
-            color=discord.Color.blue(),
-            timestamp=datetime.now()
-        )
-        
-        # Basic information
-        embed.add_field(name="Uptime", value=f"{uptime}", inline=True)
-        embed.add_field(name="Server Count", value=f"{guild_count:,}", inline=True)
-        embed.add_field(name="User Count", value=f"{user_count:,}", inline=True)
-        
-        # System resources
-        embed.add_field(name="Memory Usage", value=f"{memory_usage:.2f} MB", inline=True)
-        embed.add_field(name="CPU Usage", value=f"{cpu_percent:.1f}%", inline=True)
-        embed.add_field(name="Threads", value=f"{thread_count}", inline=True)
-        
-        # Search statistics
-        if self._search_stats['total_searches'] > 0:
+        user_count = sum(g.member_count for g in self.bot.guilds if g.member_count is not None)
+
+        # Build Basic Embed
+        embed = discord.Embed(title="Bot Performance Statistics", color=discord.Color.blue(), timestamp=datetime.now())
+        embed.add_field(name="Uptime", value=str(uptime), inline=True)
+        embed.add_field(name="Servers", value=f"{guild_count:,}", inline=True)
+        embed.add_field(name="Users", value=f"{user_count:,}", inline=True)
+        embed.add_field(name="Memory", value=f"{memory_usage_mb:.2f} MB", inline=True)
+        embed.add_field(name="CPU", value=f"{cpu_percent:.1f}%", inline=True)
+        embed.add_field(name="Threads", value=str(threads), inline=True)
+
+        # Add Search Stats if available
+        total_searches = int(self._search_stats['total_searches'])
+        if total_searches > 0:
+            successful_searches = int(self._search_stats['successful_searches'])
+            success_rate = (successful_searches / total_searches) * 100
             avg_time = self._search_stats['avg_search_time']
-            success_rate = (self._search_stats['successful_searches'] / self._search_stats['total_searches']) * 100
-            
-            search_stats = (
-                f"Total: {self._search_stats['total_searches']:,}\n"
-                f"Success Rate: {success_rate:.1f}%\n"
-                f"Avg Time: {avg_time:.2f}s\n"
-                f"Last Hour: {self._search_stats['last_hour_searches']}\n"
-                f"Peak Concurrent: {self._search_stats['peak_concurrent']}"
-            )
-            embed.add_field(name="Search Statistics", value=search_stats, inline=False)
-        
-        # Cache statistics
-        cache_stats = (
-            f"Thread Cache Size: {self._cache_stats['thread_cache_size']:,}\n"
-            f"Memory Hit Rate: {self._cache_stats['memory_hit_rate']:.1f}%\n"
-            f"Redis Hit Rate: {self._cache_stats['redis_hit_rate']:.1f}%"
-        )
-        embed.add_field(name="Cache Statistics", value=cache_stats, inline=False)
-        
-        # Performance metrics
-        if self._performance_metrics['total_responses'] > 0:
-            perf_stats = (
-                f"Avg Response Time: {self._performance_metrics['avg_response_time']:.2f}ms\n"
-                f"Requests Processed: {self._performance_metrics['total_responses']:,}"
-            )
-            embed.add_field(name="Performance Metrics", value=perf_stats, inline=False)
-        
-        # Most used commands
+            embed.add_field(name="Search Stats", 
+                            value=f"Total: {total_searches:,} | Success: {success_rate:.1f}% | Avg Time: {avg_time:.2f}s\n" + 
+                                  f"Last Hour: {int(self._search_stats['last_hour_searches'])} | Peak Concurrent: {int(self._search_stats['peak_concurrent'])}", 
+                            inline=False)
+
+        # Add Cache Stats
+        embed.add_field(name="Cache Stats", 
+                        value=f"Thread Cache: {int(self._cache_stats['thread_cache_size']):,} | Mem Hit: {self._cache_stats['memory_hit_rate']:.1f}% | Redis Hit: {self._cache_stats['redis_hit_rate']:.1f}%", 
+                        inline=False)
+
+        # Add Performance Metrics if available
+        total_responses = self._performance_metrics['total_responses']
+        if total_responses > 0:
+            avg_resp_time = self._performance_metrics['avg_response_time']
+            embed.add_field(name="Performance", value=f"Avg Response: {avg_resp_time:.2f}ms | Requests: {total_responses:,}", inline=False)
+
+        # Add Top Commands if available
         if self._command_usage:
-            top_commands = sorted(
-                self._command_usage.items(), 
-                key=lambda x: x[1], 
-                reverse=True
-            )[:5]
-            
-            cmd_text = "\n".join(f"`/{cmd}`: {count:,} times" for cmd, count in top_commands)
-            embed.add_field(name="Most Used Commands", value=cmd_text, inline=False)
-        
-        # Most active servers
-        if len(self._guild_usage) > 1:  # Only show if there are multiple servers
-            top_guilds = sorted(
-                self._guild_usage.items(),
-                key=lambda x: x[1]['commands'],
-                reverse=True
-            )[:3]
-            
-            guild_text = ""
-            for guild_id, stats in top_guilds:
-                guild = self.bot.get_guild(int(guild_id))
-                guild_name = guild.name if guild else f"ID:{guild_id}"
-                guild_text += f"{guild_name}: {stats['commands']:,} commands\n"
-            
-            if guild_text:
-                embed.add_field(name="Most Active Servers", value=guild_text.strip(), inline=False) # Use strip to remove trailing newline
-        
-        # Add system information
-        sys_info = (
-            f"Python: {platform.python_version()}\n"
-            f"discord.py: {discord.__version__}\n"
-            f"OS: {platform.system()} {platform.release()}"
-        )
-        embed.set_footer(text=sys_info)
-        
-        # Create detailed embed
-        detailed_embed = discord.Embed(
-            title="Detailed Performance Data",
-            color=discord.Color.blue(),
-            timestamp=datetime.now()
-        )
-        
-        # Memory details
+            top_commands = sorted(self._command_usage.items(), key=lambda x: x[1], reverse=True)[:5]
+            embed.add_field(name="Top Commands", value="\n".join(f"`/{cmd}`: {count:,}" for cmd, count in top_commands), inline=False)
+
+        # Add Top Guilds if applicable
+        if len(self._guild_usage) > 1:
+            top_guilds = sorted(self._guild_usage.items(), key=lambda x: x[1]['commands'], reverse=True)[:3]
+            guild_texts = [f"{(self.bot.get_guild(int(gid)) or f'ID:{gid}').name}: {stats['commands']:,}" for gid, stats in top_guilds]
+            embed.add_field(name="Top Servers", value="\n".join(guild_texts), inline=False)
+
+        # System Info Footer
+        embed.set_footer(text=f"Python: {platform.python_version()} | discord.py: {discord.__version__} | OS: {platform.system()}")
+
+        # Build Detailed Embed
+        detailed = discord.Embed(title="Detailed Performance Data", color=discord.Color.blue(), timestamp=datetime.now())
         memory = psutil.virtual_memory()
-        memory_details = (
-            f"Process Memory: {memory_usage:.2f} MB\n"
-            f"System Memory: {memory.percent:.1f}% used\n"
-            f"Available Memory: {memory.available/(1024*1024*1024):.2f} GB\n"
-            f"Python Objects: {len(gc.get_objects()):,}"
-        )
-        detailed_embed.add_field(name="Memory Details", value=memory_details, inline=False)
-        
-        # Network statistics
         net_io = psutil.net_io_counters()
-        net_stats = (
-            f"Sent: {net_io.bytes_sent/(1024*1024):.2f} MB\n"
-            f"Received: {net_io.bytes_recv/(1024*1024):.2f} MB\n"
-            f"Open Files: {open_files}"
-        )
-        detailed_embed.add_field(name="Network Statistics", value=net_stats, inline=False)
-        
-        # Discord connection information
-        discord_stats = (
-            f"Websocket Latency: {self.bot.latency*1000:.2f}ms\n"
-            f"Event Handlers: {len(self.bot.extra_events):,}\n"
-            f"Command Count: {len(self.bot.tree.get_commands()):,}"
-        )
-        detailed_embed.add_field(name="Discord Connection", value=discord_stats, inline=False)
-        
-        # Create view
-        view = StatsDetailView(interaction.user.id, embed, detailed_embed)
-        
+        detailed.add_field(name="Memory", value=f"Process: {memory_usage_mb:.2f}MB | System: {memory.percent:.1f}% | Avail: {memory.available/(1024**3):.2f}GB | Objects: {len(gc.get_objects()):,}", inline=False)
+        detailed.add_field(name="Network/IO", value=f"Sent: {net_io.bytes_sent/(1024**2):.2f}MB | Recv: {net_io.bytes_recv/(1024**2):.2f}MB | Files: {open_files}", inline=False)
+        detailed.add_field(name="Discord", value=f"Latency: {self.bot.latency*1000:.2f}ms | Events: {len(self.bot.extra_events):,} | Cmds: {len(self.bot.tree.get_commands()):,}", inline=False)
+
+        # Send with View
+        view = StatsDetailView(interaction.user.id, embed, detailed)
         await interaction.followup.send(embed=embed, view=view)
     
     @app_commands.command(
@@ -202,178 +116,97 @@ class Stats(commands.Cog):
     )
     @app_commands.guild_only()
     async def server_stats(self, interaction: discord.Interaction):
-        """Show statistics for the current server"""
-        if not interaction.guild:
-            await interaction.response.send_message("This command can only be used in a server", ephemeral=True)
-            return
-        
+        # Show statistics for the current server
         await interaction.response.defer()
-        
         guild = interaction.guild
-        guild_id = str(guild.id)
         
-        # Basic information
-        member_count = guild.member_count or 0 # Handle None case
-        bot_count = len([m for m in guild.members if m.bot])
-        human_count = member_count - bot_count
-        
-        # Channel statistics
-        text_channels = len(guild.text_channels)
-        voice_channels = len(guild.voice_channels)
-        categories = len(guild.categories)
-        forum_channels = len([c for c in guild.channels if isinstance(c, discord.ForumChannel)])
+        # Gather Guild Info
+        member_count = guild.member_count or 0
+        bot_count = sum(1 for m in guild.members if m.bot)
+        owner = guild.owner.mention if guild.owner else "Unknown"
+        created = guild.created_at.strftime("%Y-%m-%d")
+        text_channels, voice_channels, categories = len(guild.text_channels), len(guild.voice_channels), len(guild.categories)
+        forum_channels = sum(1 for c in guild.channels if isinstance(c, discord.ForumChannel))
         thread_count = len(guild.threads)
-        
-        # Create embed
-        embed = discord.Embed(
-            title=f"{guild.name} Server Statistics",
-            color=discord.Color.green(),
-            timestamp=datetime.now()
-        )
-        
-        # Add icon
-        if guild.icon:
-            embed.set_thumbnail(url=guild.icon.url)
-        
-        # Basic information
-        embed.add_field(name="Member Count", value=f"Total: {member_count:,}\nHumans: {human_count:,}\nBots: {bot_count:,}", inline=True)
-        embed.add_field(name="Created Date", value=guild.created_at.strftime("%Y-%m-%d"), inline=True)
-        embed.add_field(name="Owner", value=guild.owner.mention if guild.owner else "Unknown", inline=True)
-        
-        # Channel statistics
-        embed.add_field(
-            name="Channel Statistics",
-            value=f"Text Channels: {text_channels}\nVoice Channels: {voice_channels}\nCategories: {categories}\nForums: {forum_channels}\nThreads: {thread_count}",
-            inline=True
-        )
-        
-        # Roles
-        embed.add_field(name="Role Count", value=str(len(guild.roles) - 1), inline=True) # -1 to exclude @everyone
-        
-        # Emoji statistics
-        embed.add_field(
-            name="Emojis",
-            value=f"Standard: {len(guild.emojis)}\nAnimated: {len([e for e in guild.emojis if e.animated])}",
-            inline=True
-        )
-        
-        # Bot usage statistics
-        if guild_id in self._guild_usage:
-            usage = self._guild_usage[guild_id]
-            usage_text = (
-                f"Commands Used: {usage.get('commands', 0):,} times\n"
-                f"Searches: {usage.get('searches', 0):,} times\n"
-                f"Avg Response: {usage.get('avg_response', 0):.2f}ms"
-            )
-            embed.add_field(name="Bot Usage", value=usage_text, inline=False)
-        
-        # Permission check
-        bot_member = guild.get_member(self.bot.user.id)
-        if bot_member: # Check if bot is still in the guild
-            permissions = bot_member.guild_permissions
-            missing_perms = []
+        role_count = len(guild.roles) - 1
+        emoji_count = len(guild.emojis)
+        animated_emoji_count = sum(1 for e in guild.emojis if e.animated)
 
-            required_perms = {
-                "manage_webhooks": "Manage Webhooks",
-                "read_message_history": "Read Message History",
-                "add_reactions": "Add Reactions",
-                "embed_links": "Embed Links"
-            }
+        # Build Embed
+        embed = discord.Embed(title=f"{guild.name} Statistics", color=discord.Color.green(), timestamp=datetime.now())
+        if guild.icon: embed.set_thumbnail(url=guild.icon.url)
+        
+        embed.add_field(name="Members", value=f"Total: {member_count:,} | Humans: {member_count - bot_count:,} | Bots: {bot_count:,}", inline=False)
+        embed.add_field(name="Info", value=f"Created: {created} | Owner: {owner}", inline=False)
+        embed.add_field(name="Channels", value=f"Text: {text_channels} | Voice: {voice_channels} | Cat: {categories} | Forum: {forum_channels} | Threads: {thread_count}", inline=False)
+        embed.add_field(name="Misc", value=f"Roles: {role_count} | Emojis: {emoji_count} (Animated: {animated_emoji_count})", inline=False)
 
-            for perm, name in required_perms.items():
-                if not getattr(permissions, perm, False): # Check if attribute exists and is True
-                    missing_perms.append(name)
-            
-            if missing_perms:
-                embed.add_field(
-                    name="⚠️ Missing Permissions",
-                    value="The bot is missing the following permissions:\n" + "\n".join(f"- {p}" for p in missing_perms),
-                    inline=False
-                )
+        # Add Bot Usage if available
+        if usage := self._guild_usage.get(str(guild.id)):
+            embed.add_field(name="Bot Usage", value=f"Cmds: {usage['commands']:,} | Searches: {usage['searches']:,} | Avg Resp: {usage['avg_response']:.2f}ms", inline=False)
+        
+        # Check and Add Missing Permissions
+        if bot_member := guild.get_member(self.bot.user.id):
+            required = {"manage_webhooks", "read_message_history", "add_reactions", "embed_links"}
+            missing = [p.replace("_", " ").title() for p in required if not getattr(bot_member.guild_permissions, p, False)]
+            if missing: embed.add_field(name="⚠️ Missing Perms", value=", ".join(missing), inline=False)
         else:
-             embed.add_field(name="⚠️ Bot Status", value="Could not retrieve bot permissions.", inline=False)
+            embed.add_field(name="⚠️ Bot Status", value="Could not retrieve bot perms.", inline=False)
 
-        
         embed.set_footer(text=f"Server ID: {guild.id}")
         await interaction.followup.send(embed=embed)
     
+    # Record command usage (global and guild)
     def record_command_usage(self, command_name: str, guild_id: Optional[str] = None):
-        """Record command usage"""
-        # Global command usage statistics
-        if command_name in self._command_usage:
-            self._command_usage[command_name] += 1
-        else:
-            self._command_usage[command_name] = 1
-        
-        # Server-level usage statistics
+        self._command_usage[command_name] += 1
         if guild_id:
-            if guild_id not in self._guild_usage:
-                self._guild_usage[guild_id] = {'commands': 0, 'searches': 0, 'avg_response': 0}
             self._guild_usage[guild_id]['commands'] += 1
     
+    # Record search stats (global and guild)
     def record_search(self, successful: bool, duration: float, guild_id: Optional[str] = None):
-        """Record search statistics"""
         self._search_stats['total_searches'] += 1
-        
-        if successful:
-            self._search_stats['successful_searches'] += 1
-        else:
-            self._search_stats['failed_searches'] += 1
+        self._search_stats['successful_searches' if successful else 'failed_searches'] += 1
+        self._search_stats['last_hour_searches'] += 1 # Reset hourly by background task
         
         # Update average time
-        total = self._search_stats['total_search_time'] + duration
-        self._search_stats['total_search_time'] = total
-        if self._search_stats['total_searches'] > 0: # Avoid division by zero
-             self._search_stats['avg_search_time'] = total / self._search_stats['total_searches']
+        n = self._search_stats['total_searches']
+        self._search_stats['total_search_time'] += duration
+        self._search_stats['avg_search_time'] = self._search_stats['total_search_time'] / n if n > 0 else 0
         
-        # Server-level statistics
         if guild_id:
-            if guild_id not in self._guild_usage:
-                self._guild_usage[guild_id] = {'commands': 0, 'searches': 0, 'avg_response': 0}
             self._guild_usage[guild_id]['searches'] += 1
     
+    # Record response time, update global avg and guild avg (moving)
     def record_response_time(self, response_time: float, guild_id: Optional[str] = None):
-        """Record command response time"""
-        response_time_ms = response_time * 1000 # Convert seconds to milliseconds
+        response_time_ms = response_time * 1000
         self._performance_metrics['total_responses'] += 1
         
-        # Keep the last 100 response times to calculate the average
+        # Update global avg (simple moving average over last 100)
         times = self._performance_metrics['response_times']
         times.append(response_time_ms)
-        if len(times) > 100:
-            times.pop(0)
+        if len(times) > 100: times.pop(0)
+        self._performance_metrics['avg_response_time'] = sum(times) / len(times) if times else 0
         
-        # Recalculate average
-        if times: # Avoid division by zero
-             self._performance_metrics['avg_response_time'] = sum(times) / len(times)
-        
-        # Server-level statistics
+        # Update guild avg (exponential moving average)
         if guild_id:
-            if guild_id in self._guild_usage:
-                # Moving average update
-                current = self._guild_usage[guild_id].get('avg_response', 0)
-                count = self._guild_usage[guild_id].get('commands', 0)
-                if count > 0:
-                    # 90% weight for old value, 10% weight for new value, smooth change
-                    new_avg = (current * 0.9) + (response_time_ms * 0.1)
-                    self._guild_usage[guild_id]['avg_response'] = new_avg
+            current_avg = self._guild_usage[guild_id]['avg_response']
+            self._guild_usage[guild_id]['avg_response'] = (current_avg * 0.9) + (response_time_ms * 0.1)
     
+    # Update peak concurrent search count
     def update_concurrent_searches(self, current_count: int):
-        """Update concurrent search count"""
-        if current_count > self._search_stats['peak_concurrent']:
-            self._search_stats['peak_concurrent'] = current_count
+        self._search_stats['peak_concurrent'] = max(self._search_stats['peak_concurrent'], current_count)
     
+    # Update cache stats using exponential moving average for rates
     def update_cache_stats(self, cache_stats: Dict[str, Any]):
-        """Update cache statistics"""
         if 'memory_size' in cache_stats:
             self._cache_stats['thread_cache_size'] = cache_stats['memory_size']
         
+        # Memory hit rate EMA
         if 'hit_rate_pct' in cache_stats:
-            # Moving average
             current = self._cache_stats['memory_hit_rate']
-            new_rate = cache_stats['hit_rate_pct']
-            self._cache_stats['memory_hit_rate'] = (current * 0.9) + (new_rate * 0.1)
+            self._cache_stats['memory_hit_rate'] = (current * 0.9) + (cache_stats['hit_rate_pct'] * 0.1)
         
+        # Redis hit rate EMA
         if 'redis_hits' in cache_stats and 'misses' in cache_stats:
             total = cache_stats['redis_hits'] + cache_stats['misses']
             if total > 0:
@@ -381,118 +214,72 @@ class Stats(commands.Cog):
                 current = self._cache_stats['redis_hit_rate']
                 self._cache_stats['redis_hit_rate'] = (current * 0.9) + (redis_rate * 0.1)
     
+    # Background task: hourly resets and system metrics update
     async def _background_stats_update(self):
-        """Background task: update statistics"""
-        try:
-            await self.bot.wait_until_ready()
-            self._logger.info("Performance monitoring background task started")
-            
-            while not self.bot.is_closed():
-                # Reset counters every hour
+        await self.bot.wait_until_ready()
+        
+        while not self.bot.is_closed():
+            try:
+                # Hourly resets
                 self._search_stats['last_hour_searches'] = 0
                 
-                # Update system resource usage (in thread pool to avoid blocking)
+                # Update system metrics (non-blocking)
                 with ThreadPoolExecutor(max_workers=1) as executor:
-                    await self.bot.loop.run_in_executor(
-                        executor,
-                        self._update_system_metrics
-                    )
+                    await self.bot.loop.run_in_executor(executor, self._update_system_metrics)
                 
-                # Wait for 1 hour
                 await asyncio.sleep(3600)
-                
-        except asyncio.CancelledError:
-            self._logger.info("Performance monitoring background task cancelled")
-        except Exception as e:
-            self._logger.error(f"Performance monitoring background task error: {e}", exc_info=True)
+            except asyncio.CancelledError:
+                break # Exit loop cleanly on cancellation
+            except Exception as e:
+                logger.error(f"Stats background task error: {e}", exc_info=True)
+                await asyncio.sleep(60) # Wait a bit before retrying after error
     
+    # Update system metrics (runs in thread pool)
     def _update_system_metrics(self):
-        """Update system metrics (runs in thread pool)"""
         try:
-            process = psutil.Process(os.getpid()) # Get current process
-            
-            # Collect system information
-            with process.oneshot():
-                cpu_percent = process.cpu_percent(interval=None) # Use interval=None for instant snapshot
-                memory_info = process.memory_info()
-                io_counters = process.io_counters()
-                
-            self._logger.debug(
-                f"System metrics update - CPU: {cpu_percent}%, "
-                f"Memory: {memory_info.rss/(1024*1024):.1f}MB, "
-                f"IO Read: {io_counters.read_bytes/(1024*1024):.1f}MB, "
-                f"IO Write: {io_counters.write_bytes/(1024*1024):.1f}MB"
-            )
-            
+            process = psutil.Process(os.getpid())
+            with process.oneshot(): # Optimize psutil calls
+                _ = process.cpu_percent(interval=None) # Capture stats internally
+                _ = process.memory_info()
+                _ = process.io_counters()
+            # Minimal logging unless debugging needed
         except psutil.NoSuchProcess:
-             self._logger.warning("Process not found during system metrics update.")
+             logger.warning("Stats process disappeared during metrics update.")
         except Exception as e:
-            self._logger.error(f"Error updating system metrics: {e}")
+            logger.error(f"System metrics update error: {e}")
     
     def cog_unload(self):
-        """Clean up resources when Cog is unloaded"""
-        if self.bg_task:
-            self.bg_task.cancel()
+        self.bg_task and self.bg_task.cancel()
 
-
+# View to toggle between basic and detailed stats embeds
 class StatsDetailView(discord.ui.View):
-    """Statistics detail view"""
     
     def __init__(self, user_id: int, basic_embed: discord.Embed, detailed_embed: discord.Embed):
-        super().__init__(timeout=180)  # 3 minutes timeout
+        super().__init__(timeout=180)
         self.user_id = user_id
         self.basic_embed = basic_embed
         self.detailed_embed = detailed_embed
-        self.current_embed = "basic"
+        # Initial state: basic shown, detail button enabled
     
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        """Allow only the original user to interact"""
         if interaction.user.id != self.user_id:
-             await interaction.response.send_message("Only the user who initiated the command can use these buttons.", ephemeral=True)
+             await interaction.response.send_message("Only command initiator can use buttons.", ephemeral=True)
              return False
         return True
     
     @discord.ui.button(label="Basic Info", style=discord.ButtonStyle.primary, disabled=True)
     async def basic_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        """Show basic information"""
-        self.current_embed = "basic"
-        self.basic_button.disabled = True
+        button.disabled = True
         self.detail_button.disabled = False
         await interaction.response.edit_message(embed=self.basic_embed, view=self)
     
     @discord.ui.button(label="Detailed Info", style=discord.ButtonStyle.secondary)
     async def detail_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        """Show detailed information"""
-        self.current_embed = "detailed"
+        button.disabled = True
         self.basic_button.disabled = False
-        self.detail_button.disabled = True
         await interaction.response.edit_message(embed=self.detailed_embed, view=self)
     
-    @discord.ui.button(label="Refresh", style=discord.ButtonStyle.success)
-    async def refresh_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        """Refresh statistics (placeholder, ideally re-runs the original command logic)"""
-        # Notify user that it's refreshing
-        await interaction.response.defer()
-        
-        # A proper refresh would re-fetch all the stats and update the embeds.
-        # This is complex to implement here without access to the original command's context.
-        # For now, we'll just send a message indicating refresh attempt.
-        
-        # Example of how it *could* work if we had access to the cog instance:
-        # stats_cog = interaction.client.get_cog('Stats')
-        # if stats_cog:
-        #     # Re-generate embeds with fresh data (This requires the stat generation logic to be refactored)
-        #     # new_basic_embed, new_detailed_embed = await stats_cog.generate_stats_embeds() 
-        #     # self.basic_embed = new_basic_embed
-        #     # self.detailed_embed = new_detailed_embed
-        #     # current_embed_to_show = self.basic_embed if self.current_embed == "basic" else self.detailed_embed
-        #     # await interaction.edit_original_response(embed=current_embed_to_show, view=self)
-        #     await interaction.followup.send("Statistics refreshed (simulation).", ephemeral=True)
-        # else:
-        #     await interaction.followup.send("Could not refresh statistics.", ephemeral=True)
-            
-        await interaction.followup.send("Refreshing statistics... (This action currently simulates a refresh)", ephemeral=True)
-
+    # Refresh button removed as per Zen-Minimalism (avoid non-functional elements)
 
 async def setup(bot):
-    await bot.add_cog(Stats(bot)) 
+    await bot.add_cog(Stats(bot))

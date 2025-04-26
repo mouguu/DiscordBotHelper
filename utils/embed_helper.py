@@ -16,13 +16,10 @@ class DiscordEmbedBuilder:
         self.INFO_COLOR = color         # Default blue
 
     def format_timestamp(self, dt: datetime, include_time: bool = True) -> str:
-        """Format timestamp"""
         try:
-            if include_time:
-                return dt.strftime('%Y-%m-%d %H:%M')
-            return dt.strftime('%Y-%m-%d')
+            return dt.strftime('%Y-%m-%d %H:%M') if include_time else dt.strftime('%Y-%m-%d')
         except Exception as e:
-            logger.error(f"Error formatting timestamp: {str(e)}")
+            logger.error(f"[boundary:error] timestamp format failed: {e}")
             return "Unknown time"
 
     def create_thread_embed(
@@ -39,9 +36,7 @@ class DiscordEmbedBuilder:
         page_info: Optional[tuple] = None,
         compact: bool = False
     ) -> Optional[discord.Embed]:
-        """Create embed for a thread"""
         try:
-            # Create base embed
             embed = discord.Embed(
                 title=title[:256],
                 url=jump_url,
@@ -49,17 +44,14 @@ class DiscordEmbedBuilder:
                 timestamp=datetime.utcnow()
             )
 
-            # Set author info
             if author:
                 embed.set_author(
                     name=author.display_name,
                     icon_url=author.display_avatar.url if hasattr(author, 'display_avatar') else None
                 )
 
-            # Create description content
             description_parts = []
 
-            # Add basic info
             if not compact:
                 description_parts.extend([
                     f"📅 **Published Time:** {created_at.strftime('%Y-%m-%d %H:%M')}",
@@ -78,7 +70,6 @@ class DiscordEmbedBuilder:
 
             embed.description = "\n".join(description_parts)
 
-            # Add jump link
             if not compact:
                 embed.add_field(
                     name="Jump",
@@ -86,11 +77,9 @@ class DiscordEmbedBuilder:
                     inline=False
                 )
 
-            # Set thumbnail
             if thumbnail_url:
                 embed.set_thumbnail(url=thumbnail_url)
 
-            # Set page info
             if page_info and len(page_info) == 2:
                 current_page, total_pages = page_info
                 embed.set_footer(text=f"Page {current_page}/{total_pages}")
@@ -98,11 +87,10 @@ class DiscordEmbedBuilder:
             return embed
 
         except Exception as e:
-            logger.error(f"Error creating thread embed: {str(e)}")
+            logger.error(f"[boundary:error] thread embed creation failed: {e}")
             return None
 
     def create_error_embed(self, title: str, description: str, show_timestamp: bool = True) -> discord.Embed:
-        """Create Embed for error message"""
         try:
             embed = discord.Embed(
                 title=f"❌ {title[:256]}",
@@ -113,7 +101,7 @@ class DiscordEmbedBuilder:
                 embed.timestamp = datetime.utcnow()
             return embed
         except Exception as e:
-            logger.error(f"Error creating error embed: {str(e)}")
+            logger.error(f"[boundary:error] error embed creation failed: {e}")
             return discord.Embed(
                 title="❌ Error",
                 description="An unknown error occurred",
@@ -121,7 +109,6 @@ class DiscordEmbedBuilder:
             )
 
     def create_success_embed(self, title: str, description: str, show_timestamp: bool = True) -> discord.Embed:
-        """Create Embed for success message"""
         try:
             embed = discord.Embed(
                 title=f"✅ {title[:256]}",
@@ -132,11 +119,10 @@ class DiscordEmbedBuilder:
                 embed.timestamp = datetime.utcnow()
             return embed
         except Exception as e:
-            logger.error(f"Error creating success embed: {str(e)}")
+            logger.error(f"[boundary:error] success embed creation failed: {e}")
             return self.create_error_embed("Error", "Could not create success message")
 
     def create_warning_embed(self, title: str, description: str, show_timestamp: bool = True) -> discord.Embed:
-        """Create Embed for warning message"""
         try:
             embed = discord.Embed(
                 title=f"⚠️ {title[:256]}",
@@ -147,11 +133,10 @@ class DiscordEmbedBuilder:
                 embed.timestamp = datetime.utcnow()
             return embed
         except Exception as e:
-            logger.error(f"Error creating warning embed: {str(e)}")
+            logger.error(f"[boundary:error] warning embed creation failed: {e}")
             return self.create_error_embed("Error", "Could not create warning message")
 
     def create_info_embed(self, title: str, description: str, show_timestamp: bool = True) -> discord.Embed:
-        """Create Embed for info message"""
         try:
             embed = discord.Embed(
                 title=f"ℹ️ {title[:256]}",
@@ -162,7 +147,7 @@ class DiscordEmbedBuilder:
                 embed.timestamp = datetime.utcnow()
             return embed
         except Exception as e:
-            logger.error(f"Error creating info embed: {str(e)}")
+            logger.error(f"[boundary:error] info embed creation failed: {e}")
             return self.create_error_embed("Error", "Could not create info message")
 
     def add_field_if_exists(
@@ -172,7 +157,6 @@ class DiscordEmbedBuilder:
         value: Optional[Union[str, int, float]],
         inline: bool = True
     ) -> None:
-        """Add field if value exists"""
         if value is not None and str(value).strip():
             try:
                 embed.add_field(
@@ -181,42 +165,34 @@ class DiscordEmbedBuilder:
                     inline=inline
                 )
             except Exception as e:
-                logger.error(f"Error adding field: {str(e)}")
+                logger.error(f"[boundary:error] field addition failed: {name=}, {e}")
 
     def add_message_attachments(self, embed: discord.Embed, message: discord.Message) -> None:
-        """Add attachments from message to embed"""
         try:
-            # Get and validate image URLs
             thumbnail_url = self.attachment_processor.get_first_image(message)
             all_images = self.attachment_processor.get_all_images(message)
             
-            # Add thumbnail (if valid)
             if thumbnail_url:
                 try:
                     embed.set_thumbnail(url=thumbnail_url)
                 except discord.errors.InvalidArgument as e:
-                    logger.warning(f"Could not set thumbnail, URL invalid: {thumbnail_url}, Error: {e}")
+                    logger.warning(f"[boundary:error] thumbnail URL invalid: {thumbnail_url[:50]}...")
             
-            # Add all image links (if multiple)
             if len(all_images) > 1:
                 try:
-                    # Create safe link text for each image
                     image_links = []
                     for i, url in enumerate(all_images):
-                        # Limit URL length to prevent overly long links
                         display_url = url[:100] + "..." if len(url) > 100 else url
                         image_links.append(f"[Image {i+1}]({url})")
                     
-                    # Group links to prevent exceeding Discord field value limit (1024 chars)
                     links_text = "\n".join(image_links)
                     if len(links_text) > 1024:
-                        # If limit exceeded, show only the first few links
                         truncated_links = image_links[:5]
                         links_text = "\n".join(truncated_links) + "\n*(More images not shown)*"
                     
                     embed.add_field(name="Attachment Images", value=links_text, inline=False)
                 except discord.errors.InvalidArgument as e:
-                    logger.warning(f"Error adding image links field: {e}")
+                    logger.warning(f"[boundary:error] image link field creation failed: {e}")
                 
         except Exception as e:
-            logger.error(f"Error adding message attachments: {str(e)}")
+            logger.error(f"[boundary:error] attachment processing failed: {e}")

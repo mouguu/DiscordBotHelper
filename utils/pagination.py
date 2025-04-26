@@ -9,34 +9,51 @@ class PageSelectModal(discord.ui.Modal, title="Jump to Page"):
     def __init__(self, max_pages: int):
         super().__init__()
         self.max_pages = max_pages
-        self.page_number = discord.ui.TextInput(label=f'Page (1-{max_pages})', placeholder='Number...', 
-                                               min_length=1, max_length=len(str(max_pages)), required=True)
+        self.page_number = discord.ui.TextInput(
+            label=f'Page (1-{max_pages})', 
+            placeholder='Number...', 
+            min_length=1, 
+            max_length=len(str(max_pages)), 
+            required=True
+        )
         self.add_item(self.page_number)
 
     async def on_submit(self, interaction: discord.Interaction):
         try: 
             page = int(self.page_number.value)
             self.result = page - 1 if 1 <= page <= self.max_pages else None
-            await (interaction.response.defer() if self.result is not None else 
-                  interaction.response.send_message(f"Invalid page (1-{self.max_pages})", ephemeral=True))
+            
+            if self.result is not None:
+                await interaction.response.defer()
+            else:
+                await interaction.response.send_message(f"Invalid page (1-{self.max_pages})", ephemeral=True)
         except ValueError: 
             await interaction.response.send_message("Enter a valid number", ephemeral=True)
             self.result = None
 
 class MultiEmbedPaginationView(View):
-    def __init__(self, items: List[Any], items_per_page: int, 
-                embed_generator: Callable[[List[Any], int], Union[discord.Embed, List[discord.Embed]]], 
+    def __init__(self, 
+                items: List[Any], 
+                items_per_page: int, 
+                generate_embeds: Callable[[List[Any], int], Union[discord.Embed, List[discord.Embed]]], 
                 timeout: float = 900.0):
         super().__init__(timeout=timeout)
-        self.items, self.items_per_page, self.generate_embeds = items, items_per_page, embed_generator
-        self.current_page, self.message, self.original_user = 0, None, None
+        self.items = items
+        self.items_per_page = items_per_page
+        self.generate_embeds = generate_embeds
+        self.current_page = 0
+        self.message = None
+        self.original_user = None
         self.total_pages = max(1, (len(items) + items_per_page - 1) // items_per_page)
 
     def get_page_items(self, page: int = None) -> List[Any]: 
         page = self.current_page if page is None else page
-        return [] if not self.items or not (0 <= page < self.total_pages) else (
-            self.items[page * self.items_per_page:min((page + 1) * self.items_per_page, len(self.items))]
-        )
+        if not self.items or not (0 <= page < self.total_pages):
+            return []
+            
+        start = page * self.items_per_page
+        end = min((page + 1) * self.items_per_page, len(self.items))
+        return self.items[start:end]
 
     def update_button_states(self):
         disabled_first = self.current_page <= 0
@@ -45,51 +62,78 @@ class MultiEmbedPaginationView(View):
         self.next_button.disabled = self.last_button.disabled = disabled_last
 
     async def check_permissions(self, interaction: discord.Interaction) -> bool:
-        if not interaction.guild: return False
+        if not interaction.guild: 
+            return False
+            
         permissions = interaction.channel.permissions_for(interaction.guild.me)
         required = {"view_channel", "send_messages", "embed_links", "read_message_history", "add_reactions"}
         missing = [name.replace("_", " ").title() for name in required if not getattr(permissions, name)]
-        missing and await interaction.response.send_message(f"Missing: {', '.join(missing)}", ephemeral=True)
-        return not missing
+        
+        if missing:
+            await interaction.response.send_message(f"Missing: {', '.join(missing)}", ephemeral=True)
+            logger.warning(f"[boundary:error] Missing permissions: {', '.join(missing)}")
+            return False
+        return True
 
     async def update_message(self, interaction: discord.Interaction) -> bool:
-        if not await self.check_permissions(interaction): return False
+        if not await self.check_permissions(interaction): 
+            return False
         
-        # Ensure valid page and get items
+        # Bound current page to valid range
         self.current_page = max(0, min(self.current_page, self.total_pages - 1))
-        items = self.get_page_items() or (self.current_page > 0 and (setattr(self, 'current_page', 0) or self.get_page_items()))
+        
+        # Get items for the current page
+        items = self.get_page_items()
+        
+        # If no items but we're not on page 0, reset to page 0 and try again
+        if not items and self.current_page > 0:
+            self.current_page = 0
+            items = self.get_page_items()
         
         if not items:
-            not interaction.response.is_done() and await interaction.response.send_message("No content", ephemeral=True)
+            if not interaction.response.is_done():
+                await interaction.response.send_message("No content", ephemeral=True)
             return False
             
         try:
-            # Generate and update embeds
+            # Generate embeds for the current page
             embeds = await self.generate_embeds(items, self.current_page)
-            embeds = [embeds] if not isinstance(embeds, list) else embeds
-            if not embeds: raise ValueError()
+            if isinstance(embeds, discord.Embed):
+                embeds = [embeds]
+                
+            if not embeds:
+                logger.warning("[boundary:error] Empty embeds returned from generator")
+                raise ValueError("No embeds generated")
             
             self.update_button_states()
             
-            # Use message.edit or interaction.response based on state
+            # Use correct update method based on interaction state
             update_fn = interaction.message.edit if interaction.response.is_done() else interaction.response.edit_message
             await update_fn(embeds=embeds, view=self)
             return True
-        except:
-            not interaction.response.is_done() and await interaction.response.send_message("Update failed", ephemeral=True)
+        except Exception as e:
+            logger.error(f"[boundary:error] Pagination update failed: {e}")
+            if not interaction.response.is_done():
+                await interaction.response.send_message("Update failed", ephemeral=True)
             return False
 
     @button(emoji="⏮️", style=discord.ButtonStyle.blurple, custom_id="pagination:first")
     async def first_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if self.current_page == 0: await interaction.response.defer(); return
+        if self.current_page == 0: 
+            await interaction.response.defer()
+            return
+            
         self.current_page = 0
-        await self.check_permissions(interaction) and await self.update_message(interaction)
+        await self.update_message(interaction)
 
     @button(emoji="◀️", style=discord.ButtonStyle.blurple, custom_id="pagination:prev")
     async def prev_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if self.current_page <= 0: await interaction.response.defer(); return
+        if self.current_page <= 0: 
+            await interaction.response.defer()
+            return
+            
         self.current_page -= 1
-        await self.check_permissions(interaction) and await self.update_message(interaction)
+        await self.update_message(interaction)
 
     @button(emoji="🔢", style=discord.ButtonStyle.grey, custom_id="pagination:page")
     async def page_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -100,55 +144,80 @@ class MultiEmbedPaginationView(View):
         if modal.result is not None:
             if self.current_page != modal.result:
                 self.current_page = modal.result
-                self.message and await self.update_message(interaction)
+                if self.message:
+                    await self.update_message(interaction)
             else:
                 await interaction.followup.send("Already on this page", ephemeral=True)
 
     @button(emoji="▶️", style=discord.ButtonStyle.blurple, custom_id="pagination:next")
     async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if self.current_page >= self.total_pages - 1: await interaction.response.defer(); return
+        if self.current_page >= self.total_pages - 1: 
+            await interaction.response.defer()
+            return
+            
         self.current_page += 1
-        await self.check_permissions(interaction) and await self.update_message(interaction)
+        await self.update_message(interaction)
 
     @button(emoji="⏭️", style=discord.ButtonStyle.blurple, custom_id="pagination:last")
     async def last_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        if self.current_page == self.total_pages - 1: await interaction.response.defer(); return
+        if self.current_page == self.total_pages - 1: 
+            await interaction.response.defer()
+            return
+            
         self.current_page = self.total_pages - 1
-        await self.check_permissions(interaction) and await self.update_message(interaction)
+        await self.update_message(interaction)
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        valid_interaction = (interaction.type == discord.InteractionType.component and 
-                           interaction.data["component_type"] == 2 and 
-                           interaction.data["custom_id"].startswith("pagination:"))
+        is_pagination_button = (
+            interaction.type == discord.InteractionType.component and 
+            interaction.data["component_type"] == 2 and 
+            interaction.data["custom_id"].startswith("pagination:")
+        )
         
-        if not self.original_user or interaction.user.id != self.original_user.id:
-            self.original_user and await interaction.response.send_message("Only initiator can use", ephemeral=True)
+        if not is_pagination_button:
             return False
             
-        return valid_interaction
+        if self.original_user and interaction.user.id != self.original_user.id:
+            await interaction.response.send_message("Only initiator can use", ephemeral=True)
+            return False
+            
+        return True
 
     async def on_timeout(self):
         if self.message:
             try:
-                [setattr(btn, 'disabled', True) for btn in self.children if isinstance(btn, discord.ui.Button)]
+                for child in self.children:
+                    if isinstance(child, discord.ui.Button):
+                        child.disabled = True
                 await self.message.edit(view=None)
-            except:
-                pass
-            self.stop()
+                logger.debug("[signal] Pagination view timed out")
+            except Exception as e:
+                logger.warning(f"[boundary:error] Failed to clean up pagination view: {e}")
+            finally:
+                self.stop()
 
     async def start(self, interaction: discord.Interaction, initial_embeds: Union[discord.Embed, List[discord.Embed]]):
-        if not await self.check_permissions(interaction): return
+        if not await self.check_permissions(interaction):
+            return
         
         self.original_user = interaction.user
-        initial_embeds = [initial_embeds] if not isinstance(initial_embeds, list) else initial_embeds
+        
+        if isinstance(initial_embeds, discord.Embed):
+            initial_embeds = [initial_embeds]
         
         if not initial_embeds:
-            await interaction.followup.send("无法显示结果", ephemeral=True)
+            await interaction.followup.send("無法顯示結果", ephemeral=True)
+            logger.warning("[boundary:error] No initial embeds for pagination")
             return
             
         self.update_button_states()
-        self.message = await interaction.followup.send(
-            embeds=initial_embeds, 
-            view=self, 
-            ephemeral=getattr(interaction, 'ephemeral', False)
-        )
+        
+        try:
+            self.message = await interaction.followup.send(
+                embeds=initial_embeds, 
+                view=self, 
+                ephemeral=getattr(interaction, 'ephemeral', False)
+            )
+            logger.debug(f"[signal] Pagination started: {self.total_pages} pages")
+        except Exception as e:
+            logger.error(f"[boundary:error] Failed to start pagination: {e}")
