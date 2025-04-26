@@ -1,0 +1,30 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+## 🧘‍♂️ Zen-Minimalism: Structural Resonance Protocol
+
+**Intent**:
+To refine code into its minimum expressive form, stripping cognitive noise to reveal underlying semantic structure and system dynamics. Code is perceived not as mere instruction, but as a perceptual terrain shaped by generative intent. Reject scaffolding erected for hypothetical futures or external validation. Allow structural integrity to dictate form, enabling logic to flow with conceptual coherence, not just linear execution. The structure itself becomes the primary carrier of meaning.
+
+---
+
+Prioritize single-expression resonance where the core semantic unit achieves density and clarity; let structure articulate meaning directly. Embrace functional condensation—lambdas, comprehensions, higher-order functions—only when they sharpen the visibility of structural patterns and distill semantic intent, not for stylistic conformity. Arrange code to mirror the flow of conceptual dependency or structural emergence. Group elements forming cohesive semantic units, allowing the inherent logic to surface without artificial sequential constraints. Let the code's architecture directly map the conceptual model it embodies. Variable names should collapse ambiguity or signify core structural elements; otherwise, remain implicit within the flow.
+
+Resist the impulse towards defensive boilerplate and ritualistic guarding. Do not entangle logic in redundant null checks or try/except blocks habitualized by convention. Handle only those failures representing meaningful systemic deviations that demand specific, structural responses. Design logic to reveal its state or boundaries through natural failure—a fail-fast approach where cessation itself is system feedback, information, not error. Treat failure not as an exception to be verboseley managed, but as an intrinsic signal within the system's dynamic equilibrium. Clarity emerges from observing the system’s response to its limits, not from exhaustive pre-emptive padding.
+
+Maintain state minimalism. Store only what is essential for the system's ongoing transformation or perception. Actively resist premature caching, tracking flags, or state introduced 'just in case'. Conceive of state as an ephemeral manifestation within a dynamic process, not a static property to be defensively managed. Avoid performative logging; record only signals illuminating structural state changes, semantic boundary crossings, or critical feedback events. Reject logs narrating mere execution flow or redundant status updates. Trust the interaction's context; do not codify obvious operational constraints through permission theater or explicit authority checks. If an interaction is structurally impossible, let that impossibility manifest directly through system behavior.
+
+Refuse naming ceremonies and redundant identifiers. Names must carry semantic weight or clarify structural roles. Discard verbose names describing simple operational steps; let the structure and flow imply the operation. Resist imposing design patterns or excessive abstraction layers before a genuine, recurring structural need emerges organically from the core logic itself. Avoid complexity serving architectural purity over semantic clarity and direct expression. Do not permit tooling or framework idolatry to dictate core logical structure if it compromises conceptual integrity or introduces unnecessary indirection. Technology serves expression; expression does not serve technology.
+
+---
+
+### 🕊 Philosophy: Code as Generative Interface
+
+> Treat code not as static infrastructure,
+> but as a dynamic expression of intent, a generative interface between thought and system.
+> Strive for semantic resonance, where form mirrors meaning directly, structure *is* the explanation.
+> When the system encounters its limits, let it reveal them structurally, providing feedback, not noise.
+> When it flows, let it flow with perceptual clarity, reflecting the underlying generative tension driving it.
+> The objective is not merely minimal lines, but maximally expressive structure, achieving cognitive sovereignty through form.
