@@ -1,4 +1,3 @@
-# [ctx:density_mode reason=minimal_code_footprint]
 import discord,re,asyncio,enum,uuid,json,time,logging
 from discord.ext import commands
 from discord import app_commands
